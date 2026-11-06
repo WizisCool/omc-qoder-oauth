@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"net/http"
@@ -98,18 +99,22 @@ func prepareRequest(req pluginapi.ExecutorRequest, sender httpSender) (requestPl
 // execute answers one non-streaming chat completion. Qoder always streams, so
 // the buffered body is read as SSE either way.
 func execute(req pluginapi.ExecutorRequest, sender httpSender) (pluginapi.ExecutorResponse, error) {
-	release := acquire(req.AuthID)
-	defer release()
 	plan, err := prepareRequest(req, sender)
 	if err != nil {
 		return pluginapi.ExecutorResponse{}, err
 	}
+	release := acquire(req.AuthID)
+	defer release()
 	resp, err := sender.Do(plan.HTTP)
 	if err != nil {
 		return pluginapi.ExecutorResponse{}, pluginabi.NewError("transport_error", "Qoder upstream transport failed", 503)
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return pluginapi.ExecutorResponse{}, decisionError(classifyUpstream(resp.StatusCode, resp.Body))
+	}
+	if !bytes.Contains(resp.Body, []byte("data:")) {
+		// A 200 that is not an SSE stream is Qoder refusing in JSON.
+		return pluginapi.ExecutorResponse{}, decisionError(classifyUpstream(http.StatusBadGateway, resp.Body))
 	}
 	events := newQoderEvents(plan.Tools)
 	var out []qoderEvent
@@ -280,7 +285,8 @@ func executeStream(req pluginapi.ExecutorRequest, callbackID, streamID string, s
 		release()
 		return nil, pluginabi.NewError("transport_error", "Qoder upstream stream unavailable", 503)
 	}
-	if response.StatusCode < 200 || response.StatusCode >= 300 {
+	contentType := strings.ToLower(response.Headers.Get("Content-Type"))
+	if response.StatusCode < 200 || response.StatusCode >= 300 || strings.Contains(contentType, "application/json") {
 		raw, readErr := readWholeStream(response.StreamID)
 		release()
 		if readErr != nil {

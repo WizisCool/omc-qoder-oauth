@@ -28,6 +28,16 @@ const (
 
 var phoneEmailPattern = regexp.MustCompile(`^phone_[0-9a-f-]+@phone\.local$`)
 
+// expiredError marks a sign-in the vendor refused: the host must ask the user
+// to sign in again rather than retry the refresh.
+type expiredError struct{ message string }
+
+func (e *expiredError) Error() string { return e.message }
+
+func signInExpired(spec siteSpec) error {
+	return &expiredError{message: spec.Name + " sign-in has expired; sign in again"}
+}
+
 // startLogin begins a PKCE device flow on the selected portal. The verifier is
 // derived from the sealed state's nonce, so the opaque state CPA carries stays
 // inside its 128-character limit.
@@ -464,7 +474,7 @@ func refreshCredential(req pluginapi.AuthRefreshRequest, sender httpSender) (plu
 	}
 	spec, _ := siteFor(c.Site)
 	if strings.TrimSpace(c.Refresh) == "" {
-		return out, errors.New("Qoder sign-in cannot be renewed; sign in again")
+		return out, signInExpired(spec)
 	}
 	refreshed, err := renewJobToken(req.AuthID, sender, spec, c)
 	if err != nil {
@@ -532,7 +542,7 @@ func renewOnce(sender httpSender, spec siteSpec, c credential) (credential, erro
 	raw, err := openAPI(sender, "POST", spec.OpenAPI+"/api/v1/jobToken/refresh", "", map[string]string{"refresh_token": c.Refresh})
 	if err != nil {
 		if status := statusOf(err); status == 401 || status == 403 {
-			return credential{}, errors.New(spec.Name + " sign-in has expired; sign in again")
+			return credential{}, signInExpired(spec)
 		}
 		return credential{}, fmt.Errorf("%s job token refresh failed: %s", spec.Name, readableFailure(err))
 	}

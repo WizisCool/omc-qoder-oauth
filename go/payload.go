@@ -346,13 +346,7 @@ func qoderMessages(msgs []chatMessage) []map[string]any {
 					id = callID(i, k, c)
 				}
 				open = append(open, id)
-				args := "{}"
-				if len(c.Function.Arguments) > 0 {
-					args = string(c.Function.Arguments)
-					if !strings.HasPrefix(strings.TrimSpace(args), "{") {
-						args = `"` + strings.ReplaceAll(strings.TrimSpace(args), `"`, `\"`) + `"`
-					}
-				}
+				args := argumentsText(c.Function.Arguments)
 				calls = append(calls, map[string]any{"id": id, "type": "function", "function": map[string]any{"name": c.Function.Name, "arguments": args}})
 			}
 			turn := map[string]any{"role": "assistant", "content": textOf(m.Content), "tool_calls": calls}
@@ -392,6 +386,22 @@ func qoderMessages(msgs []chatMessage) []map[string]any {
 	}
 	flushSeen()
 	return out
+}
+
+// argumentsText is a tool call's arguments as the string Qoder takes. OpenAI
+// clients send a JSON string; a client that sends an object is accepted too.
+func argumentsText(raw json.RawMessage) string {
+	if len(raw) == 0 || string(raw) == "null" {
+		return "{}"
+	}
+	var s string
+	if json.Unmarshal(raw, &s) == nil {
+		if strings.TrimSpace(s) == "" {
+			return "{}"
+		}
+		return s
+	}
+	return strings.TrimSpace(string(raw))
 }
 
 // callID is the id a call the client sent without one goes out with: the same
@@ -474,7 +484,7 @@ func effortFor(asked string, m qoderModel, budget int) (bool, string) {
 		}
 		return -1
 	}
-	if rank(want) < 0 {
+	if want != "none" && rank(want) < 0 {
 		want = ""
 	}
 	if want == "" && budget > 0 && budget <= 1024 {
