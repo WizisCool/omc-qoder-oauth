@@ -86,14 +86,14 @@ func TestAuthIdentifierPublishesTwoEntries(t *testing.T) {
 
 func TestParseAuthReadsPersistedFile(t *testing.T) {
 	raw := map[string]any{
-		"type":         "qoder",
-		"site":         siteQoderCN,
-		"access":       "jt",
-		"refresh":      "rt",
-		"device_token": "dt",
-		"uid":          "u-1",
-		"email":        "dev@example.test",
-		"machine_id":   "11111111-2222-3333-4444-555555555555",
+		"type":           "qoder",
+		"site":           siteQoderCN,
+		"access":         "jt",
+		"refresh":        "rt",
+		"device_token":   "dt",
+		"uid":            "u-1",
+		"email":          "dev@example.test",
+		"machine_id":     "11111111-2222-3333-4444-555555555555",
 		"oauth_provider": siteQoderCN,
 	}
 	body, _ := json.Marshal(raw)
