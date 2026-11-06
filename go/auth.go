@@ -473,7 +473,7 @@ func refreshCredential(req pluginapi.AuthRefreshRequest, sender httpSender) (plu
 		return out, errors.New("invalid qoder credential")
 	}
 	spec, _ := siteFor(c.Site)
-	if strings.TrimSpace(c.Refresh) == "" {
+	if strings.TrimSpace(c.Refresh) == "" && strings.TrimSpace(c.DeviceRefresh) == "" {
 		return out, signInExpired(spec)
 	}
 	refreshed, err := renewJobToken(req.AuthID, sender, spec, c)
@@ -539,6 +539,9 @@ func renewJobToken(authID string, sender httpSender, spec siteSpec, c credential
 }
 
 func renewOnce(sender httpSender, spec siteSpec, c credential) (credential, error) {
+	if c.DeviceChat || strings.TrimSpace(c.Access) == "" {
+		return renewDeviceToken(sender, spec, c)
+	}
 	raw, err := openAPI(sender, "POST", spec.OpenAPI+"/api/v1/jobToken/refresh", "", map[string]string{"refresh_token": c.Refresh})
 	if err != nil {
 		if status := statusOf(err); status == 401 || status == 403 {
@@ -566,6 +569,54 @@ func renewOnce(sender httpSender, spec siteSpec, c credential) (credential, erro
 		next.Expires = at
 	} else {
 		next.Expires = time.Now().Add(day).UnixMilli()
+	}
+	return next, nil
+}
+
+// renewDeviceToken refreshes a device token. On a Qoder CN account whose device
+// token is also its chat token, the refreshed pair becomes both.
+func renewDeviceToken(sender httpSender, spec siteSpec, c credential) (credential, error) {
+	if strings.TrimSpace(c.DeviceRefresh) == "" {
+		return credential{}, signInExpired(spec)
+	}
+	raw, err := openAPI(sender, "POST", spec.OpenAPI+"/api/v1/deviceToken/refresh", "", map[string]string{"refresh_token": c.DeviceRefresh})
+	if err != nil {
+		if status := statusOf(err); status == 401 || status == 403 {
+			return credential{}, signInExpired(spec)
+		}
+		return credential{}, fmt.Errorf("%s device token refresh failed: %s", spec.Name, readableFailure(err))
+	}
+	var dt struct {
+		Token     string          `json:"token"`
+		DeviceTok string          `json:"device_token"`
+		Refresh   string          `json:"refresh_token"`
+		ExpiresAt json.RawMessage `json:"expires_at"`
+		ExpiresIn float64         `json:"expires_in"`
+	}
+	if json.Unmarshal(raw, &dt) != nil {
+		return credential{}, errors.New(spec.Name + " device token refresh returned an invalid response")
+	}
+	token := firstNonEmpty(dt.Token, dt.DeviceTok)
+	if token == "" {
+		return credential{}, errors.New(spec.Name + " device token refresh returned no token")
+	}
+	next := c
+	next.DeviceToken = token
+	if dt.Refresh != "" {
+		next.DeviceRefresh = strings.TrimSpace(dt.Refresh)
+	}
+	expires := whenSaid(dt.ExpiresAt)
+	if expires == 0 && dt.ExpiresIn > 0 {
+		expires = time.Now().UnixMilli() + int64(dt.ExpiresIn*1000)
+	}
+	if expires <= 0 {
+		expires = time.Now().Add(day).UnixMilli()
+	}
+	next.Expires = expires
+	if c.DeviceChat {
+		// The same pair signs the chat calls and reads usage.
+		next.Access = token
+		next.Refresh = next.DeviceRefresh
 	}
 	return next, nil
 }

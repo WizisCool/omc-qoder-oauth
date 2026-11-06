@@ -15,6 +15,7 @@ type streamAnswer struct {
 	roleSent bool
 	finished bool
 	emitted  bool
+	content  bool
 }
 
 func newStreamAnswer(model string) *streamAnswer {
@@ -54,18 +55,22 @@ func (a *streamAnswer) frames(e qoderEvent) [][]byte {
 	case e.Text != "":
 		out := a.preamble()
 		a.emitted = true
+		a.content = true
 		return append(out, a.frame(map[string]any{"content": e.Text}, nil, nil))
 	case e.Reasoning != "":
 		out := a.preamble()
 		a.emitted = true
+		a.content = true
 		return append(out, a.frame(map[string]any{"reasoning_content": e.Reasoning}, nil, nil))
 	case e.Tool != nil:
 		out := a.preamble()
 		a.emitted = true
+		a.content = true
 		call := map[string]any{"index": e.Tool.Index, "id": e.Tool.ID, "type": "function", "function": map[string]any{"name": e.Tool.Name, "arguments": e.Tool.Args}}
 		return append(out, a.frame(map[string]any{"tool_calls": []any{call}}, nil, nil))
 	case e.Args != nil:
 		a.emitted = true
+		a.content = true
 		call := map[string]any{"index": e.Args.Index, "function": map[string]any{"arguments": e.Args.Text}}
 		return [][]byte{a.frame(map[string]any{"tool_calls": []any{call}}, nil, nil)}
 	case e.Stop != "":
@@ -76,6 +81,9 @@ func (a *streamAnswer) frames(e qoderEvent) [][]byte {
 	}
 	return nil
 }
+
+// saidSomething reports whether the answer carried anything the client keeps.
+func (a *streamAnswer) saidSomething() bool { return a.content }
 
 // done is the terminal frame of the stream.
 func (a *streamAnswer) done() []byte {

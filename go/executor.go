@@ -233,6 +233,7 @@ func (p *streamPump) deliver(events []qoderEvent) bool {
 		}
 		for _, frame := range p.writer.frames(e) {
 			if emitStreamFrame(p.target, frame) != nil {
+				closeStream(p.target, "client stream closed")
 				return false
 			}
 			p.emitted = true
@@ -253,6 +254,10 @@ func (p *streamPump) run() {
 		}
 		if r.Done {
 			if !p.deliver(p.events.flush()) {
+				return
+			}
+			if !p.writer.saidSomething() {
+				closeStream(p.target, "Qoder ended without an answer")
 				return
 			}
 			if frame := p.writer.done(); len(frame) > 0 {

@@ -429,6 +429,7 @@ func TestExecuteMapsUpstreamRefusal(t *testing.T) {
 
 func TestStreamPumpEmitsOpenAIFrames(t *testing.T) {
 	var frames [][]byte
+	var framesMu sync.Mutex
 	origRead, origEmit, origOpen := readStreamChunk, emitStreamFrame, openHTTPStream
 	sent := false
 	readStreamChunk = func(id string) (hostReadResponse, error) {
@@ -439,7 +440,9 @@ func TestStreamPumpEmitsOpenAIFrames(t *testing.T) {
 		return hostReadResponse{Done: true}, nil
 	}
 	emitStreamFrame = func(id string, payload []byte) error {
+		framesMu.Lock()
 		frames = append(frames, append([]byte(nil), payload...))
+		framesMu.Unlock()
 		return nil
 	}
 	openHTTPStream = func(plan requestPlan, callbackID string) (hostStreamResponse, error) {
@@ -455,13 +458,16 @@ func TestStreamPumpEmitsOpenAIFrames(t *testing.T) {
 		t.Fatal(err)
 	}
 	deadline := time.Now().Add(2 * time.Second)
-	for len(frames) < 3 && time.Now().Before(deadline) {
+	count := func() int { framesMu.Lock(); defer framesMu.Unlock(); return len(frames) }
+	for count() < 3 && time.Now().Before(deadline) {
 		time.Sleep(5 * time.Millisecond)
 	}
-	if len(frames) < 3 {
-		t.Fatalf("frames = %d", len(frames))
+	if count() < 3 {
+		t.Fatalf("frames = %d", count())
 	}
+	framesMu.Lock()
 	joined := string(bytes.Join(frames, nil))
+	framesMu.Unlock()
 	if !strings.Contains(joined, `"content":"Hi"`) || !strings.Contains(joined, "data: [DONE]") {
 		t.Fatalf("frames = %s", joined)
 	}
@@ -538,4 +544,36 @@ func decodeMust(t *testing.T, wire string) []byte {
 		t.Fatal(err)
 	}
 	return raw
+}
+
+func TestRefreshDeviceChatRotatesTheChatPair(t *testing.T) {
+	sender := &fakeSender{reply: func(r pluginapi.HTTPRequest) (pluginapi.HTTPResponse, error) {
+		if !strings.Contains(r.URL, "/deviceToken/refresh") {
+			t.Errorf("device-chat account refreshed via %s", r.URL)
+		}
+		var body map[string]string
+		_ = json.Unmarshal(r.Body, &body)
+		if body["refresh_token"] != "dr-1" {
+			t.Errorf("refresh body = %v", body)
+		}
+		return jsonResponse(`{"token":"dt-2","refresh_token":"dr-2","expires_in":3600}`), nil
+	}}
+	c := credential{Site: siteQoderCN, Refresh: "dr-1", DeviceToken: "dt-1", DeviceRefresh: "dr-1", DeviceChat: true, UID: "u", MachineID: "m"}
+	out, err := refreshCredential(pluginapi.AuthRefreshRequest{AuthID: "a", StorageJSON: storageOf(c)}, sender)
+	if err != nil {
+		t.Fatal(err)
+	}
+	next, err := readCredential(out.Auth.StorageJSON)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if next.DeviceToken != "dt-2" || next.DeviceRefresh != "dr-2" || next.Access != "dt-2" || next.Refresh != "dr-2" || !next.DeviceChat {
+		t.Fatalf("credential = %+v", next)
+	}
+	if next.chatToken() != "dt-2" {
+		t.Fatalf("chat token = %q", next.chatToken())
+	}
+	if time.UnixMilli(next.Expires).Before(time.Now().Add(50 * time.Minute)) {
+		t.Fatalf("expiry = %v", next.expiry())
+	}
 }
