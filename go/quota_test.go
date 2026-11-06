@@ -55,10 +55,10 @@ func TestQuotaFetchNormalizesUsage(t *testing.T) {
 			want: pluginapi.QuotaFetchResponse{
 				Subscription: &pluginapi.QuotaSubscription{Plan: "personal_pro", TierName: "Qoder"},
 				Summary: []pluginapi.QuotaMetric{
-					{Key: "credits_left", Label: "Credits", Value: 120, Unit: "credits", Format: "number"},
+					{Key: "credits", Label: "Credits", Value: 120, Unit: "credits", Format: "number"},
 				},
 				Groups: []pluginapi.QuotaGroup{{
-					DisplayName: "Qoder credits",
+					DisplayName: "Qoder",
 					Buckets: []pluginapi.QuotaBucket{
 						{Window: "Credits", RemainingFraction: 0.06, ResetTime: "2026-02-03T04:05:06Z", Description: "120 / 2,000 credits left"},
 					},
@@ -71,13 +71,13 @@ func TestQuotaFetchNormalizesUsage(t *testing.T) {
 			want: pluginapi.QuotaFetchResponse{
 				Subscription: &pluginapi.QuotaSubscription{Plan: "personal_pro", TierName: "Qoder"},
 				Summary: []pluginapi.QuotaMetric{
-					{Key: "credits_left", Label: "Credits", Value: 0, Unit: "credits", Format: "number"},
-					{Key: "credits_left", Label: "Add-on credits", Value: 400, Unit: "credits", Format: "number"},
-					{Key: "credits_left", Label: "Team credits", Value: 50, Unit: "credits", Format: "number"},
-					{Key: "credits_left", Label: "Dedicated credits", Value: 30, Unit: "credits", Format: "number"},
+					{Key: "credits", Label: "Credits", Value: 0, Unit: "credits", Format: "number"},
+					{Key: "addon_credits", Label: "Add-on credits", Value: 400, Unit: "credits", Format: "number"},
+					{Key: "shared_credits", Label: "Team credits", Value: 50, Unit: "credits", Format: "number"},
+					{Key: "dedicated_credits", Label: "Dedicated credits", Value: 30, Unit: "credits", Format: "number"},
 				},
 				Groups: []pluginapi.QuotaGroup{{
-					DisplayName: "Qoder credits",
+					DisplayName: "Qoder",
 					Buckets: []pluginapi.QuotaBucket{
 						{Window: "Credits", RemainingFraction: 0, Description: "0 / 1,000 credits left"},
 						{Window: "Add-on credits", RemainingFraction: 0.8, Description: "400 / 500 credits left"},
@@ -100,10 +100,10 @@ func TestQuotaFetchNormalizesUsage(t *testing.T) {
 			want: pluginapi.QuotaFetchResponse{
 				Subscription: &pluginapi.QuotaSubscription{Plan: "personal_standard", TierName: "Qoder"},
 				Summary: []pluginapi.QuotaMetric{
-					{Key: "credits_left", Label: "Credits", Value: 0, Unit: "credits", Format: "number"},
+					{Key: "credits", Label: "Credits", Value: 0, Unit: "credits", Format: "number"},
 				},
 				Groups: []pluginapi.QuotaGroup{{
-					DisplayName: "Qoder credits",
+					DisplayName: "Qoder",
 					Buckets: []pluginapi.QuotaBucket{
 						{Window: "Credits", RemainingFraction: 0, ResetTime: resetFromEpoch, Description: "0 credits left"},
 					},
@@ -116,10 +116,10 @@ func TestQuotaFetchNormalizesUsage(t *testing.T) {
 			want: pluginapi.QuotaFetchResponse{
 				Subscription: &pluginapi.QuotaSubscription{Plan: "personal_standard", TierName: "Qoder"},
 				Summary: []pluginapi.QuotaMetric{
-					{Key: "credits_left", Label: "Credits", Value: 0, Unit: "credits", Format: "number"},
+					{Key: "credits", Label: "Credits", Value: 0, Unit: "credits", Format: "number"},
 				},
 				Groups: []pluginapi.QuotaGroup{{
-					DisplayName: "Qoder credits",
+					DisplayName: "Qoder",
 					Buckets:     []pluginapi.QuotaBucket{{Window: "Credits", RemainingFraction: 0, Description: "0 credits left"}},
 				}},
 			},
@@ -130,13 +130,13 @@ func TestQuotaFetchNormalizesUsage(t *testing.T) {
 			want: pluginapi.QuotaFetchResponse{
 				Subscription: &pluginapi.QuotaSubscription{Plan: "personal_ultra", TierName: "Qoder"},
 				Summary: []pluginapi.QuotaMetric{
-					{Key: "credits_left", Label: "Credits", Value: 600, Unit: "credits", Format: "number"},
-					{Key: "credits_left", Label: "Add-on credits", Value: 0, Unit: "credits", Format: "number"},
-					{Key: "credits_left", Label: "Org credits", Value: 75, Unit: "credits", Format: "number"},
-					{Key: "credits_left", Label: "Dedicated A", Value: 30, Unit: "credits", Format: "number"},
+					{Key: "credits", Label: "Credits", Value: 600, Unit: "credits", Format: "number"},
+					{Key: "addon_credits", Label: "Add-on credits", Value: 0, Unit: "credits", Format: "number"},
+					{Key: "shared_credits", Label: "Org credits", Value: 75, Unit: "credits", Format: "number"},
+					{Key: "dedicated_credits", Label: "Dedicated A", Value: 30, Unit: "credits", Format: "number"},
 				},
 				Groups: []pluginapi.QuotaGroup{{
-					DisplayName: "Qoder credits",
+					DisplayName: "Qoder",
 					Buckets: []pluginapi.QuotaBucket{
 						{Window: "Credits", RemainingFraction: 0.3, ResetTime: "2026-05-06T07:08:09Z", Description: "600 / 2,000 credits left"},
 						{Window: "Add-on credits", RemainingFraction: 0, Description: "0 / 300 credits left"},
@@ -152,10 +152,10 @@ func TestQuotaFetchNormalizesUsage(t *testing.T) {
 			want: pluginapi.QuotaFetchResponse{
 				Subscription: &pluginapi.QuotaSubscription{Plan: "Qoder", TierName: "Qoder"},
 				Summary: []pluginapi.QuotaMetric{
-					{Key: "credits_left", Label: "Credits", Value: 10, Unit: "credits", Format: "number"},
+					{Key: "credits", Label: "Credits", Value: 10, Unit: "credits", Format: "number"},
 				},
 				Groups: []pluginapi.QuotaGroup{{
-					DisplayName: "Qoder credits",
+					DisplayName: "Qoder",
 					Buckets: []pluginapi.QuotaBucket{
 						{Window: "Credits", RemainingFraction: 0.8, Description: "10 / 12.5 credits left"},
 					},
@@ -311,6 +311,50 @@ func TestFormatAmountWritesCreditCounts(t *testing.T) {
 	for value, want := range cases {
 		if got := formatAmount(value); got != want {
 			t.Errorf("formatAmount(%v) = %q, want %q", value, got, want)
+		}
+	}
+}
+
+// Qoder names some pools with an activation code. It is an identifier, not
+// display text, so the bucket is named for what the pool is and the code is
+// dropped rather than printed beside the bar.
+func TestQuotaFetchHidesOpaquePoolNames(t *testing.T) {
+	body := `{"displayMode":"qoder","qoderUsage":{"userType":"personal_standard","userQuota":{"name":"Credits","total":100,"remaining":100},"addOnQuota":{"name":"act-20261105-316","total":50,"remaining":50}}}`
+	resp, err := quotaFetch(pluginapi.QuotaFetchRequest{Provider: credentialProvider, StorageJSON: testCredential(siteQoder)}, quotaSender(200, body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(resp.Groups) != 1 || len(resp.Groups[0].Buckets) != 2 {
+		t.Fatalf("groups = %+v", resp.Groups)
+	}
+	buckets := resp.Groups[0].Buckets
+	if buckets[0].Window != "Credits" || buckets[1].Window != "Add-on credits" {
+		t.Fatalf("windows = %q, %q", buckets[0].Window, buckets[1].Window)
+	}
+	if strings.Contains(buckets[1].Description, "act-") {
+		t.Fatalf("description leaks the activation code: %q", buckets[1].Description)
+	}
+	if buckets[1].Description != "50 / 50 credits left" {
+		t.Fatalf("description = %q", buckets[1].Description)
+	}
+}
+
+func TestOpaquePoolName(t *testing.T) {
+	cases := map[string]bool{
+		"act-20261105-316":                     true,
+		"plan_123456":                          true,
+		"20261105":                             true,
+		"8f7c2d1e6a4b9c0d":                     true,
+		"3f2a6c1e-1234-4abc-9def-0123456789ab": true,
+		"Credits":                              false,
+		"Add-on credits":                       false,
+		"Team credits":                         false,
+		"Dedicated A":                          false,
+		"个人版":                                  false,
+	}
+	for name, want := range cases {
+		if got := opaquePoolName(name); got != want {
+			t.Errorf("opaquePoolName(%q) = %v, want %v", name, got, want)
 		}
 	}
 }

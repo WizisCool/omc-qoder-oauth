@@ -22,6 +22,8 @@ type quotaPool struct {
 	Unit      string
 	// Plan marks the plan's own credits, the pool Qoder refreshes when the plan does.
 	Plan bool
+	// Key is the stable summary-metric name for this pool.
+	Key string
 }
 
 // usageEnvelope is the usage endpoint's answer: the panel it tells the account
@@ -139,37 +141,49 @@ func quotaFetch(req pluginapi.QuotaFetchRequest, sender httpSender) (pluginapi.Q
 		reset = time.UnixMilli(at).UTC().Format(time.RFC3339)
 	}
 	var pools []quotaPool
-	add := func(p *usagePool, fallback string, plan bool) {
+	add := func(p *usagePool, fallback, key string, plan bool) {
 		total, used, ok := p.numbers()
 		if !ok {
 			return
 		}
+		// A pool's own name is display text only when it reads as one: Qoder
+		// names some pools with activation codes ("act-20261105-316"), which
+		// are identifiers rather than something an operator can read.
 		name := strings.TrimSpace(p.Name)
-		if name == "" {
+		if name == "" || opaquePoolName(name) {
 			name = fallback
 		}
 		unit := strings.TrimSpace(p.Unit)
 		if unit == "" {
 			unit = "credits"
 		}
-		pools = append(pools, quotaPool{Name: name, Total: total, Used: used, Remaining: math.Max(0, total-used), Unit: unit, Plan: plan})
+		pools = append(pools, quotaPool{Name: name, Key: key, Total: total, Used: used, Remaining: math.Max(0, total-used), Unit: unit, Plan: plan})
 	}
-	add(first(usage.UserQuota, usage.UserQuotaAlt), "Credits", true)
-	add(first(usage.AddOn, usage.AddOnAlt), "Add-on credits", false)
-	add(first(usage.Org, usage.OrgAlt), "Shared credits", false)
+	add(first(usage.UserQuota, usage.UserQuotaAlt), "Credits", "credits", true)
+	add(first(usage.AddOn, usage.AddOnAlt), "Add-on credits", "addon_credits", false)
+	add(first(usage.Org, usage.OrgAlt), "Shared credits", "shared_credits", false)
 	dedicated := usage.Dedicated
 	if len(dedicated) == 0 {
 		dedicated = usage.DedicatedAlt
 	}
 	for i := range dedicated {
-		add(&dedicated[i], "Dedicated credits", false)
+		label := "Dedicated credits"
+		key := "dedicated_credits"
+		if len(dedicated) > 1 {
+			label = fmt.Sprintf("Dedicated credits %d", i+1)
+			key = fmt.Sprintf("dedicated_credits_%d", i+1)
+		}
+		add(&dedicated[i], label, key, false)
 	}
-	group := pluginapi.QuotaGroup{DisplayName: "Qoder credits"}
+	// The group is the product; each bucket names its own pool, so a host that
+	// prefixes the group prints "Qoder · Add-on credits" rather than repeating
+	// an opaque pool identifier.
+	group := pluginapi.QuotaGroup{DisplayName: "Qoder"}
 	if len(pools) == 0 {
 		// A free account with an empty plan: Qoder's client counts that pool as
 		// 0/0 as out of credits, so this is no credits left rather than no data.
 		group.Buckets = append(group.Buckets, pluginapi.QuotaBucket{Window: "Credits", Description: "0 credits left", ResetTime: reset})
-		out.Summary = append(out.Summary, pluginapi.QuotaMetric{Key: "credits_left", Label: "Credits", Unit: "credits", Format: "number"})
+		out.Summary = append(out.Summary, pluginapi.QuotaMetric{Key: "credits", Label: "Credits", Value: 0, Unit: "credits", Format: "number"})
 		out.Groups = append(out.Groups, group)
 		return out, nil
 	}
@@ -183,10 +197,64 @@ func quotaFetch(req pluginapi.QuotaFetchRequest, sender httpSender) (pluginapi.Q
 			bucket.ResetTime = reset
 		}
 		group.Buckets = append(group.Buckets, bucket)
-		out.Summary = append(out.Summary, pluginapi.QuotaMetric{Key: "credits_left", Label: p.Name, Value: p.Remaining, Unit: p.Unit, Format: "number"})
+		out.Summary = append(out.Summary, pluginapi.QuotaMetric{Key: p.Key, Label: p.Name, Value: p.Remaining, Unit: p.Unit, Format: "number"})
 	}
 	out.Groups = append(out.Groups, group)
 	return out, nil
+}
+
+// opaquePoolName reports a pool name that carries an identifier rather than
+// display text: Qoder's activation codes ("act-20261105-316"), UUIDs, hex ids
+// and bare numbers.
+func opaquePoolName(name string) bool {
+	n := strings.TrimSpace(name)
+	if n == "" {
+		return false
+	}
+	if strings.Count(n, "-") == 4 && len(n) == 36 {
+		return true
+	}
+	digits, letters := 0, 0
+	for _, r := range n {
+		switch {
+		case r >= '0' && r <= '9':
+			digits++
+		case r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z':
+			letters++
+		}
+	}
+	if digits == 0 {
+		return false
+	}
+	// "act-20261105-316", "plan_123456", "sub-0001": a short word then a run
+	// of digits, with no spaces.
+	if !strings.ContainsAny(n, " \t") && letters <= 8 {
+		parts := strings.FieldsFunc(n, func(r rune) bool { return r == '-' || r == '_' })
+		if len(parts) >= 2 && digits >= 6 {
+			for _, part := range parts[1:] {
+				if part == "" {
+					return false
+				}
+				for _, r := range part {
+					if r < '0' || r > '9' {
+						return false
+					}
+				}
+			}
+			return true
+		}
+	}
+	if digits == len([]rune(n)) && digits >= 6 {
+		return true
+	}
+	hexOnly := true
+	for _, r := range strings.ToLower(n) {
+		if (r < '0' || r > '9') && (r < 'a' || r > 'f') {
+			hexOnly = false
+			break
+		}
+	}
+	return hexOnly && len(n) >= 16
 }
 
 func first[T any](a, b *T) *T {
