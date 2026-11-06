@@ -245,14 +245,20 @@ func (d *sseDecoder) flush() []string {
 
 // qoderEvents reads Qoder's SSE frames and yields normalized events.
 type qoderEvents struct {
-	dec      sseDecoder
-	tools    []chatTool
-	native   map[int]*nativeCall
-	index    int
-	finish   string
-	usage    *openAIUsage
-	sawTool  bool
-	finished bool
+	dec     sseDecoder
+	split   *splitter
+	native  map[int]*nativeCall
+	index   int
+	finish  string
+	usage   *openAIUsage
+	sawTool bool
+	// said is whether any of the answer went out: text, reasoning or a call,
+	// which a client may already show.
+	said bool
+	// done is Qoder's [DONE]: nothing more is read, but the answer still ends.
+	done bool
+	// closed is an answer that already ended, in an error or its stop.
+	closed bool
 }
 
 // nativeCall is one tool call Qoder streams the OpenAI way. Its index is the
@@ -266,7 +272,7 @@ type nativeCall struct {
 }
 
 func newQoderEvents(tools []chatTool) *qoderEvents {
-	return &qoderEvents{tools: tools, native: map[int]*nativeCall{}, index: -1}
+	return &qoderEvents{split: newSplitter(tools), native: map[int]*nativeCall{}, index: -1}
 }
 
 func (q *qoderEvents) feed(chunk []byte) []qoderEvent {
@@ -277,23 +283,73 @@ func (q *qoderEvents) feed(chunk []byte) []qoderEvent {
 	return out
 }
 
+// toolEmitted reports whether the answer carried a tool call, which makes the
+// stop reason tool_calls.
+func (q *qoderEvents) toolEmitted() bool { return q.sawTool }
+
+// flush ends the answer: the text still held, the calls in it, and the stop with
+// the usage Qoder sent after its finish.
 func (q *qoderEvents) flush() []qoderEvent {
 	var out []qoderEvent
 	for _, line := range q.dec.flush() {
 		out = append(out, q.line(line)...)
 	}
-	if q.finished {
+	if q.closed {
 		return out
 	}
+	pieces, ok := q.pieces(q.split.flush())
+	out = append(out, pieces...)
+	if !ok {
+		q.closed = true
+		return out
+	}
+	// A native call the model began and never named is never given: a client
+	// keeps an unnamed tool in its history and other providers refuse it. Its
+	// arguments, held while it waited for the name, go nowhere, not into the
+	// text either. With nothing said before it the reply is no answer: a 502
+	// the executor may retry. After an answer began the call is dropped and the
+	// answer ends as it would have without it, so the text, reasoning and named
+	// calls already given are kept.
+	nameless := 0
+	for _, call := range q.native {
+		if !call.Named {
+			nameless++
+		}
+	}
+	if nameless > 0 && !q.said {
+		q.closed = true
+		return append(out, qoderEvent{Err: &qoderFailure{Status: 502, Message: namelessCallText, Nameless: true}})
+	}
+	q.closed = true
 	stop := "stop"
 	if q.sawTool {
 		stop = "tool_calls"
 	} else if q.finish == "length" {
 		stop = "length"
 	}
-	out = append(out, qoderEvent{Stop: stop, Usage: q.usage})
-	q.finished = true
-	return out
+	return append(out, qoderEvent{Stop: stop, Usage: q.usage})
+}
+
+// pieces turns the splitter's findings into events: a call takes the next
+// client-facing index and an id of its own, text passes through, and a call
+// that can't be read ends the turn as a 502.
+func (q *qoderEvents) pieces(found []callPiece) ([]qoderEvent, bool) {
+	var out []qoderEvent
+	for _, f := range found {
+		switch {
+		case f.Call != nil:
+			q.index++
+			q.sawTool = true
+			q.said = true
+			out = append(out, qoderEvent{Tool: &qoderToolCall{Index: q.index, ID: randomCallID(), Name: f.Call.Name, Args: f.Call.Args}})
+		case f.Error != "":
+			return append(out, qoderEvent{Err: &qoderFailure{Status: 502, Message: f.Error}}), false
+		case f.Text != "":
+			q.said = true
+			out = append(out, qoderEvent{Text: f.Text})
+		}
+	}
+	return out, true
 }
 
 type sseFrame struct {
@@ -338,7 +394,7 @@ type streamChunk struct {
 }
 
 func (q *qoderEvents) line(line string) []qoderEvent {
-	if !strings.HasPrefix(line, "data:") {
+	if q.closed || q.done || !strings.HasPrefix(line, "data:") {
 		return nil
 	}
 	payload := strings.TrimSpace(line[len("data:"):])
@@ -349,36 +405,52 @@ func (q *qoderEvents) line(line string) []qoderEvent {
 	if json.Unmarshal([]byte(payload), &frame) != nil {
 		return nil
 	}
-	if frame.StatusCodeValue != nil && *frame.StatusCodeValue != 200 {
-		return []qoderEvent{{Err: classifyUpstream(*frame.StatusCodeValue, []byte(frame.Body))}}
-	}
 	inner := strings.TrimSpace(frame.Body)
+	if frame.StatusCodeValue != nil && *frame.StatusCodeValue != 200 {
+		body := inner
+		if body == "" {
+			body = payload
+		}
+		q.closed = true
+		return []qoderEvent{{Err: classifyUpstream(*frame.StatusCodeValue, []byte(body))}}
+	}
 	if inner == "" {
 		return nil
 	}
 	if inner == "[DONE]" {
+		q.done = true
 		return nil
 	}
 	var chunk streamChunk
 	if json.Unmarshal([]byte(inner), &chunk) != nil {
 		return nil
 	}
+	// A refusal said inside an OK frame (a Lingma 1.0 domain's "Model not
+	// exist" or 105) is the turn's failure, not a chunk to read past into an
+	// empty answer.
 	if len(chunk.Choices) == 0 && (chunk.Error != nil || (len(chunk.Code) > 0 && chunk.Message != "")) {
+		q.closed = true
 		return []qoderEvent{{Err: classifyUpstream(502, []byte(inner))}}
 	}
 	var out []qoderEvent
 	delta := streamDelta{}
 	if len(chunk.Choices) > 0 {
 		delta = chunk.Choices[0].Delta
-		if chunk.Choices[0].FinishReason != nil {
-			q.finish = *chunk.Choices[0].FinishReason
+		if finish := chunk.Choices[0].FinishReason; finish != nil && *finish != "" {
+			q.finish = *finish
 		}
 	}
 	if delta.ReasoningContent != "" {
+		q.said = true
 		out = append(out, qoderEvent{Reasoning: delta.ReasoningContent})
 	}
-	if delta.Content != nil && *delta.Content != "" {
-		out = append(out, qoderEvent{Text: *delta.Content})
+	if delta.Content != nil {
+		pieces, ok := q.pieces(q.split.feed(*delta.Content))
+		out = append(out, pieces...)
+		if !ok {
+			q.closed = true
+			return out
+		}
 	}
 	for _, tc := range delta.ToolCalls {
 		index := 0
@@ -387,6 +459,9 @@ func (q *qoderEvents) line(line string) []qoderEvent {
 		}
 		name := strings.TrimSpace(tc.Function.Name)
 		args := rawArguments(tc.Function.Arguments)
+		if tc.ID == "" && name == "" && args == "" {
+			continue
+		}
 		call := q.native[index]
 		if call == nil {
 			call = &nativeCall{}
@@ -396,15 +471,24 @@ func (q *qoderEvents) line(line string) []qoderEvent {
 			call.ID = tc.ID
 		}
 		if !call.Named {
+			// An id or arguments can arrive before the name. Never give an
+			// unnamed tool: clients keep it and other providers refuse it.
 			call.Args += args
 			if name == "" {
 				continue
 			}
-			call.Name = name
-			call.Named = true
+			pieces, ok := q.pieces(q.split.flush())
+			out = append(out, pieces...)
+			if !ok {
+				q.closed = true
+				return out
+			}
+			if call.ID == "" {
+				call.ID = randomCallID()
+			}
 			q.index++
-			call.Index = q.index
-			q.sawTool = true
+			call.Index, call.Name, call.Named = q.index, name, true
+			q.sawTool, q.said = true, true
 			out = append(out, qoderEvent{Tool: &qoderToolCall{Index: call.Index, ID: call.ID, Name: call.Name, Args: call.Args}})
 			continue
 		}
