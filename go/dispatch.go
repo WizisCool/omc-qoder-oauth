@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"sync"
 
@@ -71,10 +72,10 @@ func registration() any {
 			GitHubRepository: "https://github.com/WizisCool/omc-qoder-oauth",
 			Logo:             resourceAssetURL(pluginLogo),
 			ConfigFields: []pluginapi.ConfigField{
-				{Name: "site", Type: pluginapi.ConfigFieldTypeEnum, EnumValues: []string{siteQoder, siteQoderCN}, Description: "Fallback sign-in portal for a login request that names no entry: qoder (the default) or qoder-cn. The panel's Qoder / Qoder CN entries pick their own site and do not read this."},
-				{Name: "max_concurrency", Type: pluginapi.ConfigFieldTypeInteger, Description: "Maximum simultaneous requests per credential (default 3)."},
-				{Name: "cosy_version", Type: pluginapi.ConfigFieldTypeString, Description: "Qoder client version the COSY request envelope claims (default 1.1.69)."},
-				{Name: "max_tokens", Type: pluginapi.ConfigFieldTypeInteger, Description: "Output token budget used when the client names none (default 32000)."},
+				{Name: "site", Type: pluginapi.ConfigFieldTypeEnum, Default: siteQoder, EnumValues: []string{siteQoder, siteQoderCN}, Description: "Fallback sign-in portal for a login request that names no entry: qoder (the default) or qoder-cn. The panel's Qoder / Qoder CN entries pick their own site and do not read this."},
+				{Name: "max_concurrency", Type: pluginapi.ConfigFieldTypeInteger, Default: 3, Description: "Maximum simultaneous requests per credential (default 3)."},
+				{Name: "cosy_version", Type: pluginapi.ConfigFieldTypeString, Default: defaultCosyVersion, Description: "Qoder client version the COSY request envelope claims (default 1.1.69)."},
+				{Name: "max_tokens", Type: pluginapi.ConfigFieldTypeInteger, Default: 32000, Description: "Output token budget used when the client names none (default 32000)."},
 			},
 		},
 		"capabilities": map[string]any{
@@ -115,6 +116,10 @@ func handleMethod(method string, raw []byte) (any, error) {
 			"credential_providers": []string{credentialProvider},
 			"entries":              authEntries(),
 		}, nil
+	case "executor.identifier", "quota.identifier":
+		// The executor and quota providers route by the credential key, not by
+		// a login entry: both portals share one provider.
+		return map[string]string{"identifier": credentialProvider}, nil
 	case "auth.parse":
 		var r pluginapi.AuthParseRequest
 		if err := unmarshal(raw, &r); err != nil {
@@ -152,7 +157,11 @@ func handleMethod(method string, raw []byte) (any, error) {
 		setAuthDir(r.Host.AuthDir)
 		v, err := refreshCredential(r.AuthRefreshRequest, cpaSender{callbackID: r.CallbackID})
 		if err != nil {
-			return nil, pluginabi.NewError("reauth_required", err.Error(), 401)
+			var expired *expiredError
+			if errors.As(err, &expired) {
+				return nil, pluginabi.NewError("reauth_required", err.Error(), 401)
+			}
+			return nil, pluginabi.NewError("refresh_error", err.Error(), 503)
 		}
 		return v, nil
 	case "management.register":
