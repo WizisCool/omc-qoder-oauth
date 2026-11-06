@@ -20,25 +20,33 @@ type quotaPool struct {
 	Used      float64
 	Remaining float64
 	Unit      string
+	// Plan marks the plan's own credits, the pool Qoder refreshes when the plan does.
+	Plan bool
 }
 
+// usageEnvelope is the usage endpoint's answer: the panel it tells the account
+// to show, and for a personal account the plan's own credit pools.
 type usageEnvelope struct {
-	DisplayMode string `json:"displayMode"`
-	ModeSnake   string `json:"display_mode"`
-	Usage       *struct {
-		UserType     string          `json:"userType"`
-		UserTypeAlt  string          `json:"user_type"`
-		ExpiresAt    json.RawMessage `json:"expiresAt"`
-		ExpiresAtAlt json.RawMessage `json:"expires_at"`
-		UserQuota    *usagePool      `json:"userQuota"`
-		UserQuotaAlt *usagePool      `json:"user_quota"`
-		AddOn        *usagePool      `json:"addOnQuota"`
-		AddOnAlt     *usagePool      `json:"add_on_quota"`
-		Org          *usagePool      `json:"orgResourcePackage"`
-		OrgAlt       *usagePool      `json:"org_resource_package"`
-		Dedicated    []usagePool     `json:"dedicatedResourcePackages"`
-		DedicatedAlt []usagePool     `json:"dedicated_resource_packages"`
-	} `json:"qoderUsage"`
+	DisplayMode string     `json:"displayMode"`
+	ModeSnake   string     `json:"display_mode"`
+	Usage       *usageNode `json:"qoderUsage"`
+	UsageSnake  *usageNode `json:"qoder_usage"`
+}
+
+// usageNode is qoderUsage: the account's plan and every pool of credits it holds.
+type usageNode struct {
+	UserType     string          `json:"userType"`
+	UserTypeAlt  string          `json:"user_type"`
+	ExpiresAt    json.RawMessage `json:"expiresAt"`
+	ExpiresAtAlt json.RawMessage `json:"expires_at"`
+	UserQuota    *usagePool      `json:"userQuota"`
+	UserQuotaAlt *usagePool      `json:"user_quota"`
+	AddOn        *usagePool      `json:"addOnQuota"`
+	AddOnAlt     *usagePool      `json:"add_on_quota"`
+	Org          *usagePool      `json:"orgResourcePackage"`
+	OrgAlt       *usagePool      `json:"org_resource_package"`
+	Dedicated    []usagePool     `json:"dedicatedResourcePackages"`
+	DedicatedAlt []usagePool     `json:"dedicated_resource_packages"`
 }
 
 type usagePool struct {
@@ -109,20 +117,29 @@ func quotaFetch(req pluginapi.QuotaFetchRequest, sender httpSender) (pluginapi.Q
 	if json.Unmarshal(raw, &env) != nil {
 		return out, pluginabiError("usage_error", "Qoder returned an invalid usage response", 502)
 	}
-	mode := firstNonEmpty(env.DisplayMode, env.ModeSnake)
-	if env.Usage == nil || mode == "enterprise" {
+	// The envelope names the panel to show, and an answer that names neither is
+	// refused rather than read as a plan: an error envelope carries no mode.
+	mode := strings.ToLower(firstNonEmpty(env.DisplayMode, env.ModeSnake))
+	switch mode {
+	case "enterprise":
 		out.Subscription = &pluginapi.QuotaSubscription{Plan: "Enterprise", TierName: "Qoder"}
 		return out, nil
+	case "qoder":
+		if first(env.Usage, env.UsageSnake) == nil {
+			return out, pluginabiError("usage_error", "Qoder returned no quota data", 502)
+		}
+	default:
+		return out, pluginabiError("usage_error", fmt.Sprintf("Qoder returned an unknown usage display mode %q", mode), 502)
 	}
-	plan := firstNonEmpty(env.Usage.UserType, env.Usage.UserTypeAlt, "Qoder")
+	usage := first(env.Usage, env.UsageSnake)
+	plan := firstNonEmpty(usage.UserType, usage.UserTypeAlt, "Qoder")
 	out.Subscription = &pluginapi.QuotaSubscription{Plan: plan, TierName: "Qoder"}
-	until := firstNonEmpty(string(env.Usage.ExpiresAt), string(env.Usage.ExpiresAtAlt), "null")
 	reset := ""
-	if at := whenSaid(json.RawMessage(until)); at > 0 {
+	if at := expiresAt(usage.ExpiresAt, usage.ExpiresAtAlt); at > 0 {
 		reset = time.UnixMilli(at).UTC().Format(time.RFC3339)
 	}
 	var pools []quotaPool
-	add := func(p *usagePool, fallback string) {
+	add := func(p *usagePool, fallback string, plan bool) {
 		total, used, ok := p.numbers()
 		if !ok {
 			return
@@ -135,32 +152,34 @@ func quotaFetch(req pluginapi.QuotaFetchRequest, sender httpSender) (pluginapi.Q
 		if unit == "" {
 			unit = "credits"
 		}
-		pools = append(pools, quotaPool{Name: name, Total: total, Used: used, Remaining: math.Max(0, total-used), Unit: unit})
+		pools = append(pools, quotaPool{Name: name, Total: total, Used: used, Remaining: math.Max(0, total-used), Unit: unit, Plan: plan})
 	}
-	add(first(env.Usage.UserQuota, env.Usage.UserQuotaAlt), "Credits")
-	add(first(env.Usage.AddOn, env.Usage.AddOnAlt), "Add-on credits")
-	add(first(env.Usage.Org, env.Usage.OrgAlt), "Shared credits")
-	dedicated := env.Usage.Dedicated
+	add(first(usage.UserQuota, usage.UserQuotaAlt), "Credits", true)
+	add(first(usage.AddOn, usage.AddOnAlt), "Add-on credits", false)
+	add(first(usage.Org, usage.OrgAlt), "Shared credits", false)
+	dedicated := usage.Dedicated
 	if len(dedicated) == 0 {
-		dedicated = env.Usage.DedicatedAlt
+		dedicated = usage.DedicatedAlt
 	}
 	for i := range dedicated {
-		add(&dedicated[i], "Dedicated credits")
-	}
-	if len(pools) == 0 {
-		// A free account with an empty plan: Qoder's client shows 0 credits,
-		// which is no credits left rather than no data.
-		pools = append(pools, quotaPool{Name: "Credits", Total: 0, Used: 0, Remaining: 0, Unit: "credits"})
+		add(&dedicated[i], "Dedicated credits", false)
 	}
 	group := pluginapi.QuotaGroup{DisplayName: "Qoder credits"}
+	if len(pools) == 0 {
+		// A free account with an empty plan: Qoder's client counts that pool as
+		// 0/0 as out of credits, so this is no credits left rather than no data.
+		group.Buckets = append(group.Buckets, pluginapi.QuotaBucket{Window: "Credits", Description: "0 credits left", ResetTime: reset})
+		out.Summary = append(out.Summary, pluginapi.QuotaMetric{Key: "credits_left", Label: "Credits", Unit: "credits", Format: "number"})
+		out.Groups = append(out.Groups, group)
+		return out, nil
+	}
 	for _, p := range pools {
-		fraction := 0.0
-		if p.Total > 0 {
-			fraction = clamp01(p.Remaining / p.Total)
+		bucket := pluginapi.QuotaBucket{
+			Window:            p.Name,
+			RemainingFraction: clamp01(p.Remaining / p.Total),
+			Description:       fmt.Sprintf("%s / %s %s left", formatAmount(p.Remaining), formatAmount(p.Total), p.Unit),
 		}
-		desc := fmt.Sprintf("%s / %s %s left", formatAmount(p.Remaining), formatAmount(p.Total), p.Unit)
-		bucket := pluginapi.QuotaBucket{Window: p.Name, RemainingFraction: fraction, Description: desc}
-		if p.Name == "Credits" {
+		if p.Plan {
 			bucket.ResetTime = reset
 		}
 		group.Buckets = append(group.Buckets, bucket)
@@ -198,11 +217,28 @@ func readUsage(sender httpSender, spec siteSpec, deviceToken string) ([]byte, in
 	return resp.Body, 0, nil
 }
 
+// formatAmount writes a credit count as Qoder's own panel does: whole units with
+// thousands separators, one decimal for a part unit.
 func formatAmount(v float64) string {
+	var text string
 	if v == math.Trunc(v) {
-		return fmt.Sprintf("%.0f", v)
+		text = fmt.Sprintf("%.0f", v)
+	} else {
+		text = fmt.Sprintf("%.1f", v)
 	}
-	return fmt.Sprintf("%.1f", v)
+	whole, fraction, hasFraction := strings.Cut(text, ".")
+	var b strings.Builder
+	for i := 0; i < len(whole); i++ {
+		if i > 0 && (len(whole)-i)%3 == 0 {
+			b.WriteByte(',')
+		}
+		b.WriteByte(whole[i])
+	}
+	if hasFraction {
+		b.WriteByte('.')
+		b.WriteString(fraction)
+	}
+	return b.String()
 }
 
 func clamp01(v float64) float64 {
