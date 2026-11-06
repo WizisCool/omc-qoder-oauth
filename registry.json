@@ -6,7 +6,7 @@
       "name": "OMC Qoder OAuth",
       "description": "Native Qoder provider for CLIProxyAPI with Qoder and Qoder CN OAuth, powered by the Oh-My-CPA ecosystem. Features dual-portal login, model discovery, OpenAI-compatible execution, tool calls and normalized quota.",
       "author": "JUNZE",
-      "version": "0.1.0",
+      "version": "0.1.1",
       "repository": "https://github.com/WizisCool/omc-qoder-oauth",
       "logo": "https://raw.githubusercontent.com/WizisCool/omc-qoder-oauth/refs/heads/main/assets/qoder-color.svg",
       "homepage": "https://github.com/WizisCool/omc-qoder-oauth",
