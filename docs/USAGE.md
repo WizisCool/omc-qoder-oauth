@@ -25,7 +25,7 @@ plugins:
   enabled: true
   dir: /path/to/plugins
   store-sources:
-    - https://raw.githubusercontent.com/omc-community/omc-qoder-oauth/refs/heads/main/registry.json
+    - https://raw.githubusercontent.com/omc-community/omc-plugins/main/official.json
   configs:
     omc-qoder-oauth:
       enabled: true
@@ -87,11 +87,12 @@ The parts that matter here:
   name, logo or the description CPA's store already shows.
 - CPA serves plugin resources without management authentication, and answers 404 for
   them in Home mode. When the resource is unavailable, a reader uses the release
-  asset; when neither exists, the description in `registry.json` is the result.
+  asset; when neither exists, the description in the official plugin source is the
+  result.
 
 The served body is never re-serialized: the plugin embeds the same file that
 packaging copies into the release, so served and published bytes are comparable by
-hash. Bump the file together with `registry.json` and the plugin version.
+hash. Bump the file together with the plugin version.
 
 ## Build locally
 

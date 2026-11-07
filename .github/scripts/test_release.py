@@ -38,14 +38,9 @@ class ReleaseMetadataTests(unittest.TestCase):
         (self.root / "go/assets").mkdir(parents=True)
         (self.root / "go/dispatch.go").write_text(f'var pluginVersion = "{self.version}"\n', encoding="utf-8")
         (self.root / "go/assets/omc.json").write_bytes(self.raw)
-        self.registry = {"plugins": [{"id": metadata.PLUGIN_ID, "version": self.version}]}
-        self.write_registry()
 
     def write_descriptor(self, descriptor):
         (self.root / "go/assets/omc.json").write_text(json.dumps(descriptor), encoding="utf-8")
-
-    def write_registry(self):
-        (self.root / "registry.json").write_text(json.dumps(self.registry), encoding="utf-8")
 
     def test_current_release_source_and_tag_agree(self):
         self.assertEqual(metadata.read_metadata(self.root, version=self.version, tag="v" + self.version), (self.version, self.raw))
@@ -57,12 +52,6 @@ class ReleaseMetadataTests(unittest.TestCase):
     def test_wrong_tag_is_rejected(self):
         with self.assertRaisesRegex(ValueError, "release tag"):
             metadata.read_metadata(self.root, tag="v0.0.0")
-
-    def test_registry_version_drift_is_rejected(self):
-        self.registry["plugins"][0]["version"] = "0.0.0"
-        self.write_registry()
-        with self.assertRaisesRegex(ValueError, "registry version"):
-            metadata.read_metadata(self.root)
 
     def test_default_link_variable_drift_is_rejected(self):
         (self.root / "go/dispatch.go").write_text('var pluginVersion = "0.0.0-dev"\n', encoding="utf-8")

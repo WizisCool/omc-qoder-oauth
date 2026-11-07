@@ -64,7 +64,7 @@ be atomic, focused, and independently verified.
   - `executor`: Request building, the COSY envelope, stream pumps, and SSE framing.
   - `quota`: Usage reads and quota normalization.
   - `config`: Plugin configuration fields, parsing, and validation.
-  - `registry`: Plugin store metadata (`registry.json`) and packaging.
+  - `registry`: Release packaging and plugin store publication.
   - `readme`: Project overview, documentation links, and branding.
   - `tooling`: CI workflows, build scripts, and release packaging.
   - `release`: Release tags and version bumps.

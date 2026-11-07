@@ -57,10 +57,6 @@ def read_metadata(root=ROOT, version=None, tag=None):
         raise ValueError("descriptor must contain the four approved description locales")
     if any(not isinstance(text, str) or not text.strip() for text in descriptions.values()):
         raise ValueError("localized descriptions must be nonempty public text")
-    registry = json.loads((root / "registry.json").read_text(encoding="utf-8"), object_pairs_hook=unique_object)
-    entries = [entry for entry in registry["plugins"] if entry["id"] == PLUGIN_ID]
-    if len(entries) != 1 or entries[0]["version"] != actual_version:
-        raise ValueError("registry version differs from descriptor plugin_version")
     dispatch = (root / "go/dispatch.go").read_text(encoding="utf-8")
     default_version = re.search(r'^var pluginVersion = "([^"\n]+)"$', dispatch, re.MULTILINE)
     if default_version is None or default_version[1] != actual_version:

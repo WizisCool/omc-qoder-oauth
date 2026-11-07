@@ -95,7 +95,7 @@ plugins:
   enabled: true
   dir: /path/to/plugins
   store-sources:
-    - https://raw.githubusercontent.com/omc-community/omc-qoder-oauth/refs/heads/main/registry.json
+    - https://raw.githubusercontent.com/omc-community/omc-plugins/main/official.json
   configs:
     omc-qoder-oauth:
       enabled: true
@@ -164,7 +164,6 @@ assets/qoder.svg        反色标识，用于 Qoder CN 入口
 go/                     Go/cgo 插件实现与测试
 go/assets/              内嵌图稿与 omc.json 声明
 docs/USAGE.md           部署安装与使用指南
-registry.json           CLIProxyAPI 插件商店元数据
 ```
 
 Go 实现独立于面板。COSY 信封、设备流程等协议来源记录在 [NOTICE.md](NOTICE.md)。

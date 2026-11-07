@@ -105,7 +105,7 @@ plugins:
   enabled: true
   dir: /path/to/plugins
   store-sources:
-    - https://raw.githubusercontent.com/omc-community/omc-qoder-oauth/refs/heads/main/registry.json
+    - https://raw.githubusercontent.com/omc-community/omc-plugins/main/official.json
   configs:
     omc-qoder-oauth:
       enabled: true
@@ -180,7 +180,6 @@ assets/qoder.svg        Inverted mark used for the Qoder CN entry
 go/                     Go/cgo plugin implementation and tests
 go/assets/              Embedded artwork and the omc.json declaration
 docs/USAGE.md           Operator installation and usage guide
-registry.json           CLIProxyAPI plugin-store metadata
 ```
 
 The Go implementation is independent. Protocol provenance, including the COSY
