@@ -140,7 +140,12 @@ func execute(req pluginapi.ExecutorRequest, sender httpSender) (pluginapi.Execut
 	}, nil
 }
 
+// modelName is the id an answer reports. It is the published readable id, so a
+// panel or a usage record names "glm-5.3" rather than Qoder's internal key.
 func modelName(m qoderModel) string {
+	if id := strings.ToLower(strings.TrimSpace(m.ID)); id != "" {
+		return id
+	}
 	if key := strings.ToLower(strings.TrimSpace(m.Key)); key != "" {
 		return key
 	}

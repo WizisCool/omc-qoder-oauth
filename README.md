@@ -86,8 +86,10 @@ callback listener and no manual callback URL submission is required.
 - Qoder and Qoder CN OAuth through the PKCE device flow, one login entry per portal.
 - Job token exchange with single-use refresh tokens; Qoder CN accounts that refuse
   the exchange keep their device token as the chat token.
-- Model discovery from Qoder's `/algo/api/v2/model/list` catalogue, lowercased for
-  CPA routing, with a shipped fallback list when the catalogue cannot be read.
+- Model discovery from Qoder's `/algo/api/v2/model/list` catalogue, published under
+  the catalogue's own model names (`GLM-5.3` becomes `glm-5.3`), with a shipped
+  fallback list when the catalogue cannot be read. The internal key stays accepted,
+  so a request written for `gmodel` still resolves to the same model.
 - OpenAI chat completions in and out, streaming and non-streaming, including tool
   calls, reasoning content and image inputs.
 - Normalized quota from Qoder's `/sash/api/v2/me/usage` usage envelope.

@@ -344,7 +344,8 @@ func TestModelListingNormalizesEnabledModels(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	models := usableModels(entries)
+	spec, _ := siteFor(siteQoder)
+	models := usableModels(entries, spec)
 	if len(models) != 3 {
 		t.Fatalf("models = %d: %+v", len(models), models)
 	}

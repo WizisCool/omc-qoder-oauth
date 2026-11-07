@@ -196,11 +196,23 @@ recognized and republished when CPA imports it.
 
 ## Models and routing
 
-Model IDs are the catalogue keys from Qoder's `/algo/api/v2/model/list`, lowercased
-for CPA routing. The plugin reads the catalogue from the portal's API host
+Model IDs are the catalogue's own display names, lowercased and slugged for CPA
+routing: `GLM-5.3` is published as `glm-5.3`, `Qwen3.8-Max` as `qwen3.8-max`. A
+panel therefore lists models by the name its vendor uses, not by Qoder's internal
+catalogue key. The plugin reads the catalogue from the portal's API host
 (`api3.qoder.sh`, or `gateway.qoder.com.cn` for Qoder CN) once per credential and
 caches it for ten minutes; a lookup that misses refreshes it once.
 
+- Qoder's catalogue key (`gmodel`, `dmodel`, ...) stays the routing key sent
+  upstream, and it still resolves in a request: a client that names the old key,
+  or the display name in any casing, reaches the same catalogue entry. CPA's
+  model rules (aliases, excluded models, payload rules) match the published ID
+  instead, so a rule written for the old key has to name the new one.
+- An entry with no display name of its own takes the name the shipped list carries
+  for its key; an unknown entry with none keeps its key as its ID.
+- A display name that would collide with another entry's ID or with another
+  entry's key falls back to that entry's key, so each published ID names exactly
+  one model.
 - `auto` and `default` are dropped, because they route inside Qoder instead of
   naming a model, and entries the catalogue disables are skipped.
 - A failed read keeps the last good catalogue for that account; with no cached
@@ -288,8 +300,9 @@ Other behaviour worth knowing:
 - **No models appear:** the catalogue read failed and the shipped fallback list took
   over, or the credential is not active. Check CPA logs for `model_error` and the
   credential status.
-- **`unknown or disabled Qoder model`:** the requested key is not in the account's
-  catalogue. List the models from the panel and use the lowercase ID it shows.
+- **`unknown or disabled Qoder model`:** the requested name is not in the
+  account's catalogue. List the models from the panel and use the ID it shows; the
+  internal key (`gmodel`) is still accepted.
 - **Quota says the credential has no usage token:** the credential was written
   without a device token. Sign in again.
 - **`503` with `Retry-After`:** Qoder queued the request. Honour the delay rather

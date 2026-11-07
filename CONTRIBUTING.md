@@ -124,8 +124,10 @@ Verification:
   - Catch panics and return `pluginabi.Error` with machine codes and HTTP status.
   - Do not expose raw token bytes, auth directory paths, or upstream network errors
     to client-facing responses.
-  - Model IDs for CPA routing must always be lowercase (`strings.ToLower(key)`),
-    because CPA registry lookups are case-sensitive.
+  - Model IDs for CPA routing must always be lowercase, because CPA registry
+    lookups are case-sensitive. IDs come from the catalogue's display name
+    (`publicID`), never from an uppercase spelling, and the internal key remains
+    an accepted alias for lookup.
 
 ---
 

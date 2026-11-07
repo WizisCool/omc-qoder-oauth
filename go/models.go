@@ -62,7 +62,13 @@ var qoderCNFallbackCatalogue = func() []qoderModelSeed {
 
 // qoderModel is one normalized listing entry.
 type qoderModel struct {
-	Key           string
+	// Key is Qoder's internal catalogue key, and the only name the service
+	// routes on. It stays out of published ids because "gmodel" tells a person
+	// nothing.
+	Key string
+	// ID is the readable id CPA publishes and a client names: the catalogue's
+	// display name as a lowercase slug ("glm-5.3"). assignIDs keeps it unique.
+	ID            string
 	Name          string
 	Format        string
 	Source        string
@@ -196,12 +202,29 @@ func priceOf(raw listingEntry) (rate float64, free bool) {
 	return 0, isFree != nil && *isFree
 }
 
+// seedName is the name the shipped catalogue gives a key. A live listing whose
+// display name is missing, or merely repeats the key, still gets a name people
+// can read.
+func seedName(spec siteSpec, key string) string {
+	for _, seed := range spec.Fallback {
+		if strings.EqualFold(seed.Key, key) {
+			return seed.Name
+		}
+	}
+	return ""
+}
+
 // normalizeModel turns a listing entry into the shape the request builder uses.
-func normalizeModel(raw listingEntry) qoderModel {
+func normalizeModel(raw listingEntry, spec siteSpec) qoderModel {
 	windows, def := windowsOf(raw)
+	key := strings.TrimSpace(raw.Key)
+	name := strings.TrimSpace(raw.DisplayName)
+	if name == "" || strings.EqualFold(name, key) {
+		name = firstNonEmpty(seedName(spec, key), name, key)
+	}
 	m := qoderModel{
-		Key:           strings.TrimSpace(raw.Key),
-		Name:          firstNonEmpty(raw.DisplayName, raw.Key),
+		Key:           key,
+		Name:          name,
 		Format:        firstNonEmpty(raw.Format, "openai"),
 		Source:        firstNonEmpty(raw.Source, "system"),
 		OuterProvider: strings.TrimSpace(raw.OuterProvider),
@@ -246,7 +269,70 @@ func normalizeModel(raw listingEntry) qoderModel {
 
 // modelFromSeed is the fallback catalogue entry in the same shape.
 func modelFromSeed(s qoderModelSeed) qoderModel {
-	return qoderModel{Key: s.Key, Name: s.Name, Format: "openai", Source: "system", Images: s.Images, Context: s.Context, MaxInput: s.Context, Thinks: len(s.Efforts) > 0, Efforts: append([]string(nil), s.Efforts...)}
+	return qoderModel{Key: s.Key, ID: publicID(s.Name), Name: s.Name, Format: "openai", Source: "system", Images: s.Images, Context: s.Context, MaxInput: s.Context, Thinks: len(s.Efforts) > 0, Efforts: append([]string(nil), s.Efforts...)}
+}
+
+// idSeparators matches everything an id cannot spell: a run of spaces,
+// punctuation or non-Latin script becomes one dash.
+var idSeparators = regexp.MustCompile(`[^a-z0-9.]+`)
+
+// publicID is the id a catalogue name is published under. The catalogue's
+// names are the product names people know, so "GLM-5.3" becomes "glm-5.3":
+// lowercase for CPA's case-sensitive registry, and still the model's real name
+// in a picker. A name with nothing spellable in it yields "" and the caller
+// keeps the key instead.
+func publicID(name string) string {
+	id := strings.Trim(idSeparators.ReplaceAllString(strings.ToLower(strings.TrimSpace(name)), "-"), "-.")
+	if len(id) > 64 {
+		id = strings.TrimRight(id[:64], "-.")
+	}
+	return id
+}
+
+// assignIDs gives every published model a unique readable id. The catalogue
+// key stays the routing key sent upstream, but it stays free for lookup by the
+// model that owns it: a display name that would shadow another entry's key
+// falls back to that entry's own key, and two identical display names leave the
+// later entry on its key. Order decides, so a catalogue refresh cannot rename a
+// model whose neighbours did not change.
+func assignIDs(models []qoderModel) []qoderModel {
+	reserved := make(map[string]bool, len(models))
+	for _, m := range models {
+		reserved[strings.ToLower(strings.TrimSpace(m.Key))] = true
+	}
+	taken := make(map[string]bool, len(models))
+	for i := range models {
+		key := strings.ToLower(strings.TrimSpace(models[i].Key))
+		if key == "" {
+			continue
+		}
+		id := publicID(models[i].Name)
+		if id == "" || id == key || taken[id] || reserved[id] {
+			id = key
+		}
+		for n := 2; taken[id]; n++ {
+			id = fmt.Sprintf("%s-%d", key, n)
+		}
+		models[i].ID = id
+		taken[id] = true
+	}
+	return models
+}
+
+// matchesModel reports whether a requested name names this model. The readable
+// id and the display name are accepted in any casing, and the internal key stays
+// accepted so a client written before the ids were readable keeps reaching the
+// same catalogue entry.
+func matchesModel(m qoderModel, want string) bool {
+	want = strings.ToLower(strings.TrimSpace(want))
+	if want == "" {
+		return false
+	}
+	if strings.EqualFold(strings.TrimSpace(m.ID), want) || strings.EqualFold(strings.TrimSpace(m.Key), want) {
+		return true
+	}
+	slug := publicID(want)
+	return slug != "" && slug == publicID(m.Name)
 }
 
 func fallbackModels(spec siteSpec) []qoderModel {
@@ -254,7 +340,7 @@ func fallbackModels(spec siteSpec) []qoderModel {
 	for _, seed := range spec.Fallback {
 		out = append(out, modelFromSeed(seed))
 	}
-	return out
+	return assignIDs(out)
 }
 
 // sceneModels merges the catalogue's app scene with any chat entry the app no
@@ -290,7 +376,7 @@ func sceneModels(entries map[string][]listingEntry) []listingEntry {
 
 // usableModels is the catalogue's selectable models: enabled, and never the
 // "auto"/"default" keys, which route inside Qoder instead of naming a model.
-func usableModels(entries map[string][]listingEntry) []qoderModel {
+func usableModels(entries map[string][]listingEntry, spec siteSpec) []qoderModel {
 	var out []qoderModel
 	seen := map[string]bool{}
 	for _, entry := range sceneModels(entries) {
@@ -302,9 +388,9 @@ func usableModels(entries map[string][]listingEntry) []qoderModel {
 			continue
 		}
 		seen[key] = true
-		out = append(out, normalizeModel(entry))
+		out = append(out, normalizeModel(entry, spec))
 	}
-	return out
+	return assignIDs(out)
 }
 
 func parseListing(body []byte) (map[string][]listingEntry, error) {
@@ -379,20 +465,20 @@ func readListing(sender httpSender, c credential, spec siteSpec) ([]qoderModel, 
 	if err != nil {
 		return nil, err
 	}
-	models := usableModels(entries)
+	models := usableModels(entries, spec)
 	if len(models) == 0 {
 		return nil, errors.New("Qoder model catalogue is empty")
 	}
 	return models, nil
 }
 
-// findModel looks a requested model up by key, case-insensitively. A miss
-// refreshes the catalogue once before falling back to the shipped list.
+// findModel looks a requested model up by published id, by catalogue key or by
+// display name, case-insensitively. A miss refreshes the catalogue once before
+// falling back to the shipped list.
 func findModel(sender httpSender, c credential, spec siteSpec, model string) (qoderModel, bool) {
-	want := strings.ToLower(strings.TrimSpace(model))
 	look := func(models []qoderModel) (qoderModel, bool) {
 		for _, m := range models {
-			if strings.ToLower(m.Key) == want {
+			if matchesModel(m, model) {
 				return m, true
 			}
 		}
@@ -405,15 +491,19 @@ func findModel(sender httpSender, c credential, spec siteSpec, model string) (qo
 		return m, true
 	}
 	for _, seed := range spec.Fallback {
-		if strings.ToLower(seed.Key) == want {
-			return modelFromSeed(seed), true
+		m := modelFromSeed(seed)
+		if matchesModel(m, model) {
+			return m, true
 		}
 	}
 	return qoderModel{}, false
 }
 
 func modelInfo(m qoderModel) pluginapi.ModelInfo {
-	id := strings.ToLower(strings.TrimSpace(m.Key))
+	id := strings.ToLower(strings.TrimSpace(m.ID))
+	if id == "" {
+		id = strings.ToLower(strings.TrimSpace(m.Key))
+	}
 	context := m.Context
 	if context <= 0 {
 		context = m.MaxInput
