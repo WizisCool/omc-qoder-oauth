@@ -134,8 +134,9 @@ GET /v8/management/oauth/auth-url?provider=qoder-cn
 The caller must supply the management key in the `Authorization: Bearer ...`
 header. Do not put the key in a URL. Use the URL returned by CPA to complete the
 sign-in in the browser. A request without that header cannot initiate a flow.
-Public plugin resources serve only the static `qoder-color.svg`, `qoder.svg` and
-`omc.json` assets; other paths answer 404 and a non-GET request answers 405.
+Public plugin resources serve only the static `logo.png`, `qoder-color.svg`,
+`qoder.svg` and `omc.json` assets; other paths answer 404 and a non-GET request
+answers 405.
 
 Portal resolution order is: the entry the request names, then a `site` value in the
 login request's metadata, then the configured `site`, then Qoder. The entry wins, so

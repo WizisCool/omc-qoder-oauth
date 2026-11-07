@@ -57,8 +57,8 @@ func unmarshal(raw []byte, out any) error {
 // to its card and a re-login can find its portal.
 func authEntries() []pluginapi.AuthProviderEntry {
 	return []pluginapi.AuthProviderEntry{
-		{Identifier: siteQoder, Name: "Qoder", Logo: resourceAssetURL("qoder-color.svg")},
-		{Identifier: siteQoderCN, Name: "Qoder CN", Logo: resourceAssetURL("qoder.svg")},
+		{Identifier: siteQoder, Name: "Qoder", Logo: resourceAssetURL(qoderColorLogo)},
+		{Identifier: siteQoderCN, Name: "Qoder CN", Logo: resourceAssetURL(qoderMonoLogo)},
 	}
 }
 
@@ -166,8 +166,9 @@ func handleMethod(method string, raw []byte) (any, error) {
 		return v, nil
 	case "management.register":
 		return map[string]any{"resources": []map[string]any{
-			{"path": "/qoder-color.svg", "menu": "", "description": "Official Qoder sign-in logo."},
-			{"path": "/qoder.svg", "menu": "", "description": "Monochrome Qoder mark for the Qoder CN sign-in entry."},
+			{"path": "/" + pluginLogo, "menu": "", "description": "Plugin sticker mark: the plugin's face in a store."},
+			{"path": "/" + qoderColorLogo, "menu": "", "description": "Official Qoder sign-in logo."},
+			{"path": "/" + qoderMonoLogo, "menu": "", "description": "Monochrome Qoder mark for the Qoder CN sign-in entry."},
 			{"path": "/omc.json", "menu": "", "description": "Public, optional OMC plugin declaration."},
 		}}, nil
 	case "management.handle":

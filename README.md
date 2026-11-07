@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assets/qoder-color.svg" width="96" height="96" alt="OMC Qoder OAuth logo">
+  <img src="assets/logo.png" width="96" height="96" alt="OMC Qoder OAuth logo">
 </p>
 
 <h1 align="center">OMC Qoder OAuth</h1>
@@ -73,7 +73,8 @@ CPA's management API.
 
 OAuth starts and polling use CPA's authenticated management API. Public plugin
 resources contain only static logos and the optional description declaration:
-the two SVGs and `omc.json`. A request to those routes cannot start a flow, and a
+`logo.png`, the two provider SVGs and `omc.json`. A request to those routes cannot
+start a flow, and a
 query parameter never triggers an action.
 
 Sign-in is the PKCE device flow Qoder's own desktop client uses. The plugin builds
@@ -177,7 +178,8 @@ and ecosystem development standards.
 ## Project layout
 
 ```text
-assets/qoder-color.svg  Official light-tile mark: plugin logo and Qoder entry
+assets/logo.png         Plugin sticker: the plugin's face in a store
+assets/qoder-color.svg  Official light-tile mark for the Qoder entry
 assets/qoder.svg        Inverted mark used for the Qoder CN entry
 go/                     Go/cgo plugin implementation and tests
 go/assets/              Embedded artwork and the omc.json declaration

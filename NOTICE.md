@@ -23,9 +23,12 @@ affiliated with or endorsed by Qoder.
 
 ## Logo mapping
 
+- `assets/logo.png` is this plugin's own face in a store: the Qoder mark drawn on the
+  OMC sticker the ecosystem's plugins share. It identifies the plugin rather than the
+  service, and no sign-in card uses it.
 - `assets/qoder-color.svg` is the official Qoder mark on its light tile. It is the
-  plugin logo, it is the logo of the `qoder` login entry, and it is the image the
-  official plugin source publishes for the store.
+  logo of the `qoder` login entry, and it is the image the official plugin source
+  publishes for the store.
 - `assets/qoder.svg` is the same mark inverted (light glyph on a dark tile). It is
   the logo of the `qoder-cn` login entry, so the two sign-in cards are
   distinguishable at a glance.

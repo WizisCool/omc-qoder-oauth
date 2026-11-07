@@ -475,7 +475,7 @@ func TestStreamPumpEmitsOpenAIFrames(t *testing.T) {
 }
 
 func TestResourcesArePassive(t *testing.T) {
-	for _, path := range []string{resourcePrefix + "/qoder-color.svg", resourcePrefix + "/qoder.svg", omcResourcePath} {
+	for _, path := range []string{resourcePrefix + "/" + pluginLogo, resourcePrefix + "/qoder-color.svg", resourcePrefix + "/qoder.svg", omcResourcePath} {
 		resp, _ := handleManagementResource(pluginapi.ManagementRequest{Method: "GET", Path: path})
 		if resp.StatusCode != 200 || len(resp.Body) == 0 {
 			t.Fatalf("%s: %+v", path, resp)
@@ -509,11 +509,14 @@ func TestConfigValidation(t *testing.T) {
 }
 
 func TestEmbeddedLogosMatchPublishedAssets(t *testing.T) {
-	if len(qoderLogoColorSVG) == 0 || len(qoderLogoMonoSVG) == 0 {
+	if len(pluginLogoPNG) == 0 || len(qoderLogoColorSVG) == 0 || len(qoderLogoMonoSVG) == 0 {
 		t.Fatal("embedded logos are empty")
 	}
 	if bytes.Equal(qoderLogoColorSVG, qoderLogoMonoSVG) {
 		t.Fatal("the two login entries must not share one logo")
+	}
+	if bytes.HasPrefix(pluginLogoPNG, []byte("<svg")) {
+		t.Fatal("the plugin logo must stay a raster sticker, not a provider mark")
 	}
 }
 

@@ -144,7 +144,7 @@ func TestManagementRegisterListsPassiveResources(t *testing.T) {
 		t.Fatal(err)
 	}
 	resources := out.(map[string]any)["resources"].([]map[string]any)
-	want := []string{"/qoder-color.svg", "/qoder.svg", "/omc.json"}
+	want := []string{"/logo.png", "/qoder-color.svg", "/qoder.svg", "/omc.json"}
 	if len(resources) != len(want) {
 		t.Fatalf("resources = %v", resources)
 	}
@@ -159,7 +159,7 @@ func TestLogosMatchPublishedCopies(t *testing.T) {
 	if testing.Short() {
 		t.Skip("reads the published asset copies")
 	}
-	for name, embedded := range map[string][]byte{"qoder-color.svg": qoderLogoColorSVG, "qoder.svg": qoderLogoMonoSVG} {
+	for name, embedded := range map[string][]byte{qoderColorLogo: qoderLogoColorSVG, qoderMonoLogo: qoderLogoMonoSVG} {
 		published, err := os.ReadFile(filepath.Join("..", "assets", name))
 		if err != nil {
 			t.Fatalf("%s: %v", name, err)
@@ -170,6 +170,16 @@ func TestLogosMatchPublishedCopies(t *testing.T) {
 		if !bytes.Contains(embedded, []byte("<svg")) || bytes.Contains(embedded, []byte("<script")) {
 			t.Fatalf("%s is not a passive SVG", name)
 		}
+	}
+	published, err := os.ReadFile(filepath.Join("..", "assets", pluginLogo))
+	if err != nil {
+		t.Fatalf("%s: %v", pluginLogo, err)
+	}
+	if !bytes.Equal(published, pluginLogoPNG) {
+		t.Fatalf("%s differs between assets/ and go/assets/", pluginLogo)
+	}
+	if !bytes.HasPrefix(pluginLogoPNG, []byte("\x89PNG\r\n\x1a\n")) {
+		t.Fatalf("%s is not a PNG", pluginLogo)
 	}
 }
 

@@ -15,8 +15,19 @@ const resourcePrefix = "/v0/resource/plugins/" + pluginStoreID
 // a document, and the store manifests are URLs too.
 const publicAssetBaseURL = "https://raw.githubusercontent.com/omc-community/omc-qoder-oauth/refs/heads/main/assets/"
 
-// pluginLogo is the official Qoder mark: the light tile with the dark glyph.
-const pluginLogo = "qoder-color.svg"
+// pluginLogo is the plugin's own face in a store: the OMC sticker that pairs the
+// Qoder mark with the plugin badge. It is not a provider mark, so it never stands in
+// for a sign-in card; the two cards below keep the provider's own artwork.
+const pluginLogo = "logo.png"
+
+// qoderColorLogo is the official Qoder mark: the light tile with the dark glyph.
+const qoderColorLogo = "qoder-color.svg"
+
+// qoderMonoLogo is the Qoder CN card's mark.
+const qoderMonoLogo = "qoder.svg"
+
+//go:embed assets/logo.png
+var pluginLogoPNG []byte
 
 //go:embed assets/qoder-color.svg
 var qoderLogoColorSVG []byte
@@ -24,12 +35,12 @@ var qoderLogoColorSVG []byte
 //go:embed assets/qoder.svg
 var qoderLogoMonoSVG []byte
 
-// resourceAssetURL is the public address of one embedded logo. Only the two
-// names registered below are addressable, so the set of URLs the plugin can
-// publish stays equal to the set of bytes it ships.
+// resourceAssetURL is the public address of one embedded logo. Only the names
+// registered below are addressable, so the set of URLs the plugin can publish stays
+// equal to the set of bytes it ships.
 func resourceAssetURL(name string) string {
 	switch name {
-	case "qoder.svg", "qoder-color.svg":
+	case pluginLogo, qoderColorLogo, qoderMonoLogo:
 		return publicAssetBaseURL + name
 	default:
 		return ""
@@ -43,9 +54,12 @@ func handleManagementResource(req pluginapi.ManagementRequest) (pluginapi.Manage
 	contentType := "image/svg+xml"
 	cacheControl := "public, max-age=86400"
 	switch req.Path {
-	case resourcePrefix + "/qoder-color.svg":
+	case resourcePrefix + "/" + pluginLogo:
+		body = pluginLogoPNG
+		contentType = "image/png"
+	case resourcePrefix + "/" + qoderColorLogo:
 		body = qoderLogoColorSVG
-	case resourcePrefix + "/qoder.svg":
+	case resourcePrefix + "/" + qoderMonoLogo:
 		body = qoderLogoMonoSVG
 	case omcResourcePath:
 		body = []byte(omcDescriptorJSON)

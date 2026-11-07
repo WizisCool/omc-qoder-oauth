@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assets/qoder-color.svg" width="96" height="96" alt="OMC Qoder OAuth logo">
+  <img src="assets/logo.png" width="96" height="96" alt="OMC Qoder OAuth logo">
 </p>
 
 <h1 align="center">OMC Qoder OAuth</h1>
@@ -65,7 +65,7 @@ executor，但它们是不同主机上的不同账号，因此插件注册两个
 Management Center 或任何对接 CPA 管理 API 的面板中表现一致。
 
 OAuth 发起和轮询使用 CPA 原生受认证管理 API。公共插件资源仅包含静态 logo 与可选的
-描述声明，即两个 SVG 与 `omc.json`。对这些路由的请求无法发起登录流程，查询参数也不会
+描述声明，即 `logo.png`、两个 SVG 与 `omc.json`。对这些路由的请求无法发起登录流程，查询参数也不会
 触发任何动作。
 
 登录使用 Qoder 自带桌面客户端的 PKCE 设备流程。插件构造入口的
@@ -160,7 +160,8 @@ omc-qoder-oauth.omc.json
 ## 项目结构
 
 ```text
-assets/qoder-color.svg  官方浅色底标识：插件 logo 与 Qoder 入口
+assets/logo.png         插件贴纸：插件在商店中的标识
+assets/qoder-color.svg  官方浅色底标识，用于 Qoder 入口
 assets/qoder.svg        反色标识，用于 Qoder CN 入口
 go/                     Go/cgo 插件实现与测试
 go/assets/              内嵌图稿与 omc.json 声明
