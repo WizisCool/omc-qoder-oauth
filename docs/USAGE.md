@@ -25,7 +25,7 @@ plugins:
   enabled: true
   dir: /path/to/plugins
   store-sources:
-    - https://raw.githubusercontent.com/WizisCool/omc-qoder-oauth/refs/heads/main/registry.json
+    - https://raw.githubusercontent.com/omc-community/omc-qoder-oauth/refs/heads/main/registry.json
   configs:
     omc-qoder-oauth:
       enabled: true

@@ -1,4 +1,4 @@
-module github.com/WizisCool/omc-qoder-oauth
+module github.com/omc-community/omc-qoder-oauth
 
 go 1.27.1
 

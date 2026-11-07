@@ -69,7 +69,7 @@ func registration() any {
 			Name:             "OMC Qoder OAuth",
 			Version:          pluginVersion,
 			Author:           "JUNZE",
-			GitHubRepository: "https://github.com/WizisCool/omc-qoder-oauth",
+			GitHubRepository: "https://github.com/omc-community/omc-qoder-oauth",
 			Logo:             resourceAssetURL(pluginLogo),
 			ConfigFields: []pluginapi.ConfigField{
 				{Name: "site", Type: pluginapi.ConfigFieldTypeEnum, Default: siteQoder, EnumValues: []string{siteQoder, siteQoderCN}, Description: "Fallback sign-in portal for a login request that names no entry: qoder (the default) or qoder-cn. The panel's Qoder / Qoder CN entries pick their own site and do not read this."},

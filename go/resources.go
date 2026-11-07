@@ -13,7 +13,7 @@ const resourcePrefix = "/v0/resource/plugins/" + pluginStoreID
 // publicAssetBaseURL is the published location of the same artwork the resource
 // routes serve. OAuth entry logos use it because a panel reads a plugin logo as
 // a document, and the store manifests are URLs too.
-const publicAssetBaseURL = "https://raw.githubusercontent.com/WizisCool/omc-qoder-oauth/refs/heads/main/assets/"
+const publicAssetBaseURL = "https://raw.githubusercontent.com/omc-community/omc-qoder-oauth/refs/heads/main/assets/"
 
 // pluginLogo is the official Qoder mark: the light tile with the dark glyph.
 const pluginLogo = "qoder-color.svg"
