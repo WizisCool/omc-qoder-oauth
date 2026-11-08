@@ -97,7 +97,9 @@ callback listener and no manual callback URL submission is required.
 - Per-credential concurrency control.
 - Import of existing `"type": "qoder"` auth files.
 - Error mapping that keeps a queue notice, a usage limit and a lapsed sign-in on
-  their own status codes instead of folding them into a generic upstream failure.
+  their own status codes instead of folding them into a generic upstream failure. A
+  usage limit also states how long it still runs when Qoder sends `Retry-After`, so
+  CPA rests the credential instead of retrying inside the window.
 
 ## Installation
 

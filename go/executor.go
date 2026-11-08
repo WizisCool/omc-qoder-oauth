@@ -110,11 +110,11 @@ func execute(req pluginapi.ExecutorRequest, sender httpSender) (pluginapi.Execut
 		return pluginapi.ExecutorResponse{}, pluginabi.NewError("transport_error", "Qoder upstream transport failed", 503)
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return pluginapi.ExecutorResponse{}, decisionError(classifyUpstream(resp.StatusCode, resp.Body))
+		return pluginapi.ExecutorResponse{}, decisionError(classifyUpstream(resp.StatusCode, resp.Headers, resp.Body))
 	}
 	if !bytes.Contains(resp.Body, []byte("data:")) {
 		// A 200 that is not an SSE stream is Qoder refusing in JSON.
-		return pluginapi.ExecutorResponse{}, decisionError(classifyUpstream(http.StatusBadGateway, resp.Body))
+		return pluginapi.ExecutorResponse{}, decisionError(classifyUpstream(http.StatusBadGateway, resp.Headers, resp.Body))
 	}
 	events := newQoderEvents(plan.Tools)
 	var out []qoderEvent
@@ -302,7 +302,7 @@ func executeStream(req pluginapi.ExecutorRequest, callbackID, streamID string, s
 		if readErr != nil {
 			return nil, pluginabi.NewError("transport_error", "Qoder upstream stream failed", 503)
 		}
-		return nil, decisionError(classifyUpstream(response.StatusCode, raw))
+		return nil, decisionError(classifyUpstream(response.StatusCode, response.Headers, raw))
 	}
 	events := newQoderEvents(plan.Tools)
 	writer := newStreamAnswer(modelName(plan.Model))

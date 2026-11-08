@@ -363,14 +363,47 @@ func TestClassifyUpstreamCodes(t *testing.T) {
 		{500, `{"message":"boom"}`, 500, ""},
 	}
 	for _, c := range cases {
-		got := classifyUpstream(c.status, []byte(c.body))
+		got := classifyUpstream(c.status, nil, []byte(c.body))
 		if got.Status != c.want || (c.code != "" && got.Code != c.code) {
 			t.Errorf("classify(%d, %s) = %+v", c.status, c.body, got)
 		}
 	}
-	queue := classifyUpstream(403, []byte(`{"code":10605,"message":"queued","queue":{"isQueued":true,"retryAfterSeconds":7,"modelKey":"fast"}}`))
+	queue := classifyUpstream(403, nil, []byte(`{"code":10605,"message":"queued","queue":{"isQueued":true,"retryAfterSeconds":7,"modelKey":"fast"}}`))
 	if queue.RetryAfter != 7 || !queue.Queue {
 		t.Fatalf("queue = %+v", queue)
+	}
+}
+
+// TestQuotaRefusalCarriesTheRetryWindow pins what a quota refusal hands CPA: the
+// Retry-After Qoder sends is the only statement of when the window reopens, and
+// without it the credential is retried long before the allowance is back.
+func TestQuotaRefusalCarriesTheRetryWindow(t *testing.T) {
+	at := time.Now().Add(90 * time.Second).UTC().Format(http.TimeFormat)
+	for _, tc := range []struct {
+		name     string
+		headers  http.Header
+		body     string
+		wantWait int
+	}{
+		{"seconds", http.Header{"Retry-After": {"120"}}, `{"code":113,"message":"no credits"}`, 120},
+		{"http date", http.Header{"Retry-After": {at}}, `{"message":"quota exceeded"}`, 90},
+		{"header outranks nothing else", nil, `{"code":113,"message":"no credits"}`, 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := classifyUpstream(429, tc.headers, []byte(tc.body))
+			if got.Status != 429 {
+				t.Fatalf("status = %d", got.Status)
+			}
+			if tc.wantWait == 0 {
+				if got.RetryAfter != 0 {
+					t.Fatalf("RetryAfter = %d, want none", got.RetryAfter)
+				}
+				return
+			}
+			if got.RetryAfter < tc.wantWait-2 || got.RetryAfter > tc.wantWait {
+				t.Fatalf("RetryAfter = %d, want about %d", got.RetryAfter, tc.wantWait)
+			}
+		})
 	}
 }
 

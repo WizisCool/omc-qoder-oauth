@@ -7,7 +7,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/router-for-me/CLIProxyAPI/v8/sdk/pluginabi"
 )
@@ -41,9 +43,6 @@ func decisionError(f *qoderFailure) error {
 		status = 502
 	}
 	err := pluginabi.NewError(failureCode(f), f.Message, status)
-	if f.Code != "" {
-		err = pluginabi.NewError(failureCode(f), f.Message, status)
-	}
 	err.RetryAfterSeconds = f.RetryAfter
 	return err
 }
@@ -97,7 +96,7 @@ func rawCode(raw json.RawMessage) string {
 
 // classifyUpstream maps an HTTP failure or an error frame to a normalized
 // failure with the status the client should see.
-func classifyUpstream(status int, body []byte) *qoderFailure {
+func classifyUpstream(status int, headers http.Header, body []byte) *qoderFailure {
 	if status < 400 || status > 599 {
 		status = 502
 	}
@@ -156,11 +155,12 @@ func classifyUpstream(status int, body []byte) *qoderFailure {
 	if message == "" {
 		message = http.StatusText(status)
 	}
+	hint := retryAfterHint(headers)
 	if code == queuedCode {
 		return &qoderFailure{Status: 503, Code: code, Message: "Qoder queued the request; try again shortly", RetryAfter: 30, Queue: true}
 	}
 	if quotaCodes[code] {
-		return &qoderFailure{Status: 429, Code: code, Message: "Qoder usage limit reached: " + message}
+		return &qoderFailure{Status: 429, Code: code, Message: "Qoder usage limit reached: " + message, RetryAfter: hint}
 	}
 	if requestCodes[code] {
 		return &qoderFailure{Status: 400, Code: code, Message: fmt.Sprintf("Qoder refused the request (%s): %s", code, message)}
@@ -174,9 +174,41 @@ func classifyUpstream(status int, body []byte) *qoderFailure {
 	case status == 401 || status == 403:
 		return &qoderFailure{Status: 401, Code: code, Message: "Qoder sign-in has expired; sign in again", Lapsed: true}
 	case status == 429 || strings.Contains(strings.ToLower(message), "quota"):
-		return &qoderFailure{Status: 429, Code: code, Message: "Qoder usage limit reached: " + message}
+		return &qoderFailure{Status: 429, Code: code, Message: "Qoder usage limit reached: " + message, RetryAfter: hint}
 	}
 	return &qoderFailure{Status: status, Code: code, Message: message}
+}
+
+// retryAfterHint is how long Qoder says a limit still runs, in whole seconds, or
+// 0 when it says nothing. A 429 that states its window in Retry-After is the only
+// deadline a quota refusal carries; CPA reads the number as the cooldown it
+// applies, so without it the account is retried long before the window is over.
+func retryAfterHint(headers http.Header) int {
+	value := ""
+	if headers != nil {
+		value = strings.TrimSpace(headers.Get("Retry-After"))
+	}
+	if value == "" {
+		return 0
+	}
+	if seconds, err := strconv.Atoi(value); err == nil {
+		if seconds > 0 {
+			return seconds
+		}
+		return 0
+	}
+	at, err := http.ParseTime(value)
+	if err != nil {
+		return 0
+	}
+	wait := time.Until(at)
+	if wait <= 0 {
+		return 0
+	}
+	if seconds := int(wait / time.Second); seconds > 0 {
+		return seconds
+	}
+	return 1
 }
 
 // qoderToolCall is a tool call the answer asked for. Its name and id are known
@@ -412,7 +444,7 @@ func (q *qoderEvents) line(line string) []qoderEvent {
 			body = payload
 		}
 		q.closed = true
-		return []qoderEvent{{Err: classifyUpstream(*frame.StatusCodeValue, []byte(body))}}
+		return []qoderEvent{{Err: classifyUpstream(*frame.StatusCodeValue, nil, []byte(body))}}
 	}
 	if inner == "" {
 		return nil
@@ -430,7 +462,7 @@ func (q *qoderEvents) line(line string) []qoderEvent {
 	// empty answer.
 	if len(chunk.Choices) == 0 && (chunk.Error != nil || (len(chunk.Code) > 0 && chunk.Message != "")) {
 		q.closed = true
-		return []qoderEvent{{Err: classifyUpstream(502, []byte(inner))}}
+		return []qoderEvent{{Err: classifyUpstream(502, nil, []byte(inner))}}
 	}
 	var out []qoderEvent
 	delta := streamDelta{}
