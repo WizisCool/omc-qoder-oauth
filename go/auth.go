@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"reflect"
 	"regexp"
 	"strings"
 	"sync"
@@ -481,13 +482,17 @@ func refreshCredential(req pluginapi.AuthRefreshRequest, sender httpSender) (plu
 		return out, err
 	}
 	raw, _ := json.Marshal(refreshed)
+	metadata := refreshMetadata(req, refreshed)
+	metadata["email"] = refreshed.label()
+	metadata["type"] = credentialProvider
+	metadata["oauth_provider"] = refreshed.Site
 	out = pluginapi.AuthRefreshResponse{
 		Auth: pluginapi.AuthData{
 			Provider:         credentialProvider,
 			ID:               req.AuthID,
 			Label:            refreshed.label(),
 			StorageJSON:      raw,
-			Metadata:         map[string]any{"email": refreshed.label(), "type": credentialProvider, "oauth_provider": refreshed.Site},
+			Metadata:         metadata,
 			NextRefreshAfter: nextRefresh(refreshed),
 		},
 		NextRefreshAfter: nextRefresh(refreshed),
@@ -646,11 +651,11 @@ func parseAuth(req pluginapi.AuthParseRequest) pluginapi.AuthParseResponse {
 	default:
 		return pluginapi.AuthParseResponse{}
 	}
-	var metadata struct {
+	var persisted struct {
 		Type  string `json:"type"`
 		Email string `json:"email"`
 	}
-	if json.Unmarshal(req.RawJSON, &metadata) != nil || metadata.Type != credentialProvider {
+	if json.Unmarshal(req.RawJSON, &persisted) != nil || persisted.Type != credentialProvider {
 		return pluginapi.AuthParseResponse{}
 	}
 	c, err := readCredential(req.RawJSON)
@@ -661,18 +666,89 @@ func parseAuth(req pluginapi.AuthParseRequest) pluginapi.AuthParseResponse {
 	if name == "" {
 		name = req.Path
 	}
-	label := strings.TrimSpace(metadata.Email)
+	label := strings.TrimSpace(persisted.Email)
 	if label == "" {
 		label = c.label()
 	}
+	// The auth file also carries the host-managed metadata the management API
+	// writes next to the credential (note, prefix, priority, proxy_url, and the
+	// rest). CPA rebuilds the runtime record from this map on every reload, so a
+	// parser that answers with identity keys alone makes those fields look
+	// unpersisted the moment the file is re-read.
+	metadata := persistedMetadata(req.RawJSON, c)
+	metadata["email"] = label
+	metadata["type"] = credentialProvider
+	metadata["oauth_provider"] = c.Site
 	a := pluginapi.AuthData{
 		Provider:    credentialProvider,
 		ID:          name,
 		FileName:    req.FileName,
 		Label:       label,
 		StorageJSON: append([]byte(nil), req.RawJSON...),
-		Metadata:    map[string]any{"email": label, "type": credentialProvider, "oauth_provider": c.Site},
+		Metadata:    metadata,
 	}
 	a.NextRefreshAfter = nextRefresh(c)
 	return pluginapi.AuthParseResponse{Handled: true, Auth: a}
+}
+
+// persistedMetadata returns the host-managed fields of an auth file: everything
+// the management API writes next to the credential (note, prefix, priority,
+// proxy_url, headers, excluded models, model aliases, request retry, ...). CPA
+// rebuilds the runtime record from this map on every reload, so a parser that
+// answers with identity keys alone makes those fields read back as unpersisted.
+//
+// The credential's own fields are removed: they are carried by StorageJSON, and
+// the host merges metadata over storage when it saves, so echoing them here
+// would let a value captured at parse time overwrite a refreshed credential.
+func persistedMetadata(raw []byte, own any) map[string]any {
+	var metadata map[string]any
+	if json.Unmarshal(raw, &metadata) != nil || metadata == nil {
+		return make(map[string]any)
+	}
+	for _, key := range credentialJSONKeys(own) {
+		delete(metadata, key)
+	}
+	return metadata
+}
+
+// refreshMetadata carries the host-managed fields through a token refresh. CPA
+// saves the record returned here over the persisted file and treats a field the
+// refresh omits as deleted, so dropping the note (or prefix, priority, ...)
+// would erase it from the credential. The runtime map wins; fields only the
+// file still holds fill the gaps.
+func refreshMetadata(req pluginapi.AuthRefreshRequest, own any) map[string]any {
+	metadata := make(map[string]any, len(req.Metadata))
+	for key, value := range req.Metadata {
+		metadata[key] = value
+	}
+	for key, value := range persistedMetadata(req.StorageJSON, own) {
+		if _, exists := metadata[key]; !exists {
+			metadata[key] = value
+		}
+	}
+	for _, key := range credentialJSONKeys(own) {
+		delete(metadata, key)
+	}
+	return metadata
+}
+
+// credentialJSONKeys lists the JSON names a credential struct owns, so
+// persistedMetadata can keep them out of the host-managed map.
+func credentialJSONKeys(own any) []string {
+	t := reflect.TypeOf(own)
+	for t != nil && t.Kind() == reflect.Pointer {
+		t = t.Elem()
+	}
+	if t == nil || t.Kind() != reflect.Struct {
+		return nil
+	}
+	keys := make([]string, 0, t.NumField())
+	for i := 0; i < t.NumField(); i++ {
+		name, _, _ := strings.Cut(t.Field(i).Tag.Get("json"), ",")
+		if name == "" || name == "-" {
+			continue
+		}
+		keys = append(keys, name)
+	}
+	return keys
 }

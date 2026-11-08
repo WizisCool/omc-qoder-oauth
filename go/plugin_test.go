@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -293,6 +294,46 @@ func TestRefreshSpendsOneRefreshTokenOnce(t *testing.T) {
 	c, _ := readCredential(results[0].Auth.StorageJSON)
 	if c.Access != "jt-new" || c.Refresh != "rt-new" || c.DeviceToken != "dt-test-token" {
 		t.Fatalf("credential = %+v", c)
+	}
+}
+
+// A refresh replaces the auth record CPA persists, and its merge treats a field
+// the refresh omits as deleted. The host-managed metadata must therefore
+// survive a token rotation, or the note (and every other management field)
+// disappears from the credential.
+func TestRefreshPreservesManagementFields(t *testing.T) {
+	sender := &fakeSender{reply: func(pluginapi.HTTPRequest) (pluginapi.HTTPResponse, error) {
+		return jsonResponse(`{"token":"jt-new","refresh_token":"rt-new","expires_at":"2099-01-01T00:00:00Z"}`), nil
+	}}
+	metadata := map[string]any{
+		"note":            "work account",
+		"prefix":          "q",
+		"priority":        7,
+		"weight":          3,
+		"proxy_url":       "http://proxy.test:8080",
+		"disable_cooling": true,
+		"websockets":      false,
+		"using_api":       true,
+		"expired":         "2030-01-01T00:00:00Z",
+		"request_retry":   2,
+		"headers":         map[string]any{"X-Test": "1"},
+		"excluded_models": []any{"m1"},
+		"model_aliases":   []any{map[string]any{"name": "m", "alias": "a"}},
+	}
+	resp, err := refreshCredential(pluginapi.AuthRefreshRequest{AuthID: "qoder-x.json", StorageJSON: testCredential(siteQoderCN), Metadata: metadata}, sender)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for key, want := range metadata {
+		if got := resp.Auth.Metadata[key]; !reflect.DeepEqual(got, want) {
+			t.Fatalf("metadata[%q] = %#v, want %#v", key, got, want)
+		}
+	}
+	if got := resp.Auth.Metadata["type"]; got != credentialProvider {
+		t.Fatalf("type = %#v", got)
+	}
+	if _, ok := resp.Auth.Metadata["access"]; ok {
+		t.Fatal("refresh echoed the credential into metadata")
 	}
 }
 
