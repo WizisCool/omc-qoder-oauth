@@ -54,7 +54,8 @@ On a panel that renders per-entry metadata (CPA v8.0.51+) each entry appears as
 its own card with its own name and logo. Loading the plugin needs **CPA v8.0.49+**,
 which is where schema 10 first ships; the separate names and artwork need
 v8.0.51+. On an older host both identifiers still work, and the panel shows the
-plugin's own name and logo for them.
+plugin's own name and logo for them. An account-level quota `429` cools the whole
+credential on **CPA v8.0.62+**; an older host cools only the reporting model.
 
 - Pick the portal by picking its entry. The entry wins over any `site` hint.
 - Each credential records the portal that signed it in, as `site` and as the

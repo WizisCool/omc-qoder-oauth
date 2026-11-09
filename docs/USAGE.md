@@ -11,6 +11,9 @@
   per-entry name and logo first shipped in v8.0.51. On an older host both entries
   still work; a panel that predates the field shows one card per *identifier*
   decorated with the plugin's own name and logo.
+- **CPA v8.0.62 or later** for credential-wide cooldowns: an account-level `429`
+  cools every model of the credential. An older host ignores the scope and cools
+  only the reporting model.
 - Go 1.27.1 for local development. Release builds are produced by CI.
 
 Sign-in is not covered by an offline test. The unit tests drive the OAuth calls
@@ -271,6 +274,12 @@ sees the mapped status:
 | A message saying `error in upstream response` | `502` |
 | Transport failure, or an unavailable upstream stream | `503` |
 | Other upstream statuses | The upstream status with Qoder's message and code |
+
+A quota refusal (`429` from the credit-pool codes above, or any `429` whose message
+names the quota) is reported as credential-wide: Qoder's plan, add-on and
+organisation pools are shared by every model, so CPA cools all of them until the
+stated `Retry-After`. A bare `429` with no quota wording and the queue notice stay
+model-scoped.
 
 Other behaviour worth knowing:
 

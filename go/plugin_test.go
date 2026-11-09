@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -12,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/router-for-me/CLIProxyAPI/v8/sdk/pluginabi"
 	"github.com/router-for-me/CLIProxyAPI/v8/sdk/pluginapi"
 )
 
@@ -371,6 +373,65 @@ func TestClassifyUpstreamCodes(t *testing.T) {
 	queue := classifyUpstream(403, nil, []byte(`{"code":10605,"message":"queued","queue":{"isQueued":true,"retryAfterSeconds":7,"modelKey":"fast"}}`))
 	if queue.RetryAfter != 7 || !queue.Queue {
 		t.Fatalf("queue = %+v", queue)
+	}
+}
+
+// TestQuotaRefusalsAreCredentialScoped pins which refusal CPA may cool for the
+// whole credential: Qoder's credit pools are account-level, so a quota code or
+// quota wording stops every model until the window ends. A bare 429 and the queue
+// notice stay model-scoped.
+func TestQuotaRefusalsAreCredentialScoped(t *testing.T) {
+	cases := []struct {
+		name   string
+		status int
+		body   string
+		want   bool
+	}{
+		{"quota code", 200, `{"code":113,"message":"no credits"}`, true},
+		{"quota wording", 429, `{"message":"quota exceeded"}`, true},
+		{"bare rate limit", 429, `{"message":"too many requests"}`, false},
+		{"queue notice", 403, `{"code":10605,"message":"queued"}`, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			f := classifyUpstream(tc.status, nil, []byte(tc.body))
+			if f.CredentialScoped != tc.want {
+				t.Fatalf("failure = %+v", f)
+			}
+			var perr *pluginabi.Error
+			if err := decisionError(f); !errors.As(err, &perr) || perr.CredentialScoped != tc.want {
+				t.Fatalf("decisionError = %#v", err)
+			}
+		})
+	}
+}
+
+// TestAMidStreamRefusalClosesWithItsScope pins the host bridge contract for a
+// refusal that ends an answered stream: it must carry its status and credential
+// scope, or CPA answers it as a statusless 500 and cools only the model.
+func TestAMidStreamRefusalClosesWithItsScope(t *testing.T) {
+	previous := closeHostStreamWith
+	t.Cleanup(func() { closeHostStreamWith = previous })
+	closed := make(chan *pluginabi.Error, 1)
+	closeHostStreamWith = func(id, message string, err error) {
+		var detail *pluginabi.Error
+		errors.As(err, &detail)
+		closed <- detail
+	}
+	p := &streamPump{target: "stream-out"}
+	if p.deliver([]qoderEvent{{Err: &qoderFailure{Status: 429, Code: "113", Message: "no credits", CredentialScoped: true}}}) {
+		t.Fatal("deliver returned true for a refusal")
+	}
+	select {
+	case detail := <-closed:
+		if detail == nil {
+			t.Fatal("the stream was closed without an error_detail")
+		}
+		if detail.HTTPStatus != http.StatusTooManyRequests || !detail.CredentialScoped {
+			t.Fatalf("detail = %d %s scoped=%v", detail.HTTPStatus, detail.Code, detail.CredentialScoped)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("the stream was never closed")
 	}
 }
 

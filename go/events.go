@@ -32,6 +32,10 @@ type qoderFailure struct {
 	Lapsed     bool
 	Queue      bool
 	Nameless   bool
+	// CredentialScoped marks a refusal that spends the account's credit pools,
+	// which every model of the credential draws from, rather than a limit on the
+	// requested model alone.
+	CredentialScoped bool
 }
 
 func decisionError(f *qoderFailure) error {
@@ -44,6 +48,7 @@ func decisionError(f *qoderFailure) error {
 	}
 	err := pluginabi.NewError(failureCode(f), f.Message, status)
 	err.RetryAfterSeconds = f.RetryAfter
+	err.CredentialScoped = f.CredentialScoped
 	return err
 }
 
@@ -159,8 +164,10 @@ func classifyUpstream(status int, headers http.Header, body []byte) *qoderFailur
 	if code == queuedCode {
 		return &qoderFailure{Status: 503, Code: code, Message: "Qoder queued the request; try again shortly", RetryAfter: 30, Queue: true}
 	}
+	// Qoder's quota codes spend the account's plan, add-on and organisation
+	// credit pools, so the refusal applies to every model of the credential.
 	if quotaCodes[code] {
-		return &qoderFailure{Status: 429, Code: code, Message: "Qoder usage limit reached: " + message, RetryAfter: hint}
+		return &qoderFailure{Status: 429, Code: code, Message: "Qoder usage limit reached: " + message, RetryAfter: hint, CredentialScoped: true}
 	}
 	if requestCodes[code] {
 		return &qoderFailure{Status: 400, Code: code, Message: fmt.Sprintf("Qoder refused the request (%s): %s", code, message)}
@@ -174,7 +181,10 @@ func classifyUpstream(status int, headers http.Header, body []byte) *qoderFailur
 	case status == 401 || status == 403:
 		return &qoderFailure{Status: 401, Code: code, Message: "Qoder sign-in has expired; sign in again", Lapsed: true}
 	case status == 429 || strings.Contains(strings.ToLower(message), "quota"):
-		return &qoderFailure{Status: 429, Code: code, Message: "Qoder usage limit reached: " + message, RetryAfter: hint}
+		// A 429 without a quota code is a rate limit on this request and stays
+		// model-scoped; wording that names the quota is the account's pools.
+		covered := strings.Contains(strings.ToLower(message), "quota")
+		return &qoderFailure{Status: 429, Code: code, Message: "Qoder usage limit reached: " + message, RetryAfter: hint, CredentialScoped: covered}
 	}
 	return &qoderFailure{Status: status, Code: code, Message: message}
 }

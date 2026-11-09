@@ -187,6 +187,20 @@ func closeStream(id, message string) {
 	_ = hostRPC("host.stream.close", map[string]any{"stream_id": id, "error": message}, nil)
 }
 
+// closeStreamWithError ends a stream with the structured error the host's router
+// reads: without error_detail the host sees a statusless plugin failure and
+// answers a mid-stream refusal as a 500, so a quota 429 never reaches the
+// routing and cooldown decisions.
+func closeStreamWithError(id, message string, err error) {
+	var detail *pluginabi.Error
+	_ = errors.As(err, &detail)
+	if detail == nil {
+		closeStream(id, message)
+		return
+	}
+	_ = hostRPC("host.stream.close", map[string]any{"stream_id": id, "error": message, "error_detail": detail}, nil)
+}
+
 // readWholeStream drains and closes a host HTTP stream, with a bound so a
 // misbehaving upstream cannot exhaust memory.
 func readWholeStream(id string) ([]byte, error) {
@@ -209,9 +223,10 @@ func readWholeStream(id string) ([]byte, error) {
 
 // Streaming seams. Tests replace them to exercise the pump without a plugin host.
 var (
-	readStreamChunk = readHostStream
-	emitStreamFrame = emitStreamChunk
-	openHTTPStream  = openUpstreamStream
+	readStreamChunk     = readHostStream
+	emitStreamFrame     = emitStreamChunk
+	openHTTPStream      = openUpstreamStream
+	closeHostStreamWith = closeStreamWithError
 )
 
 func openUpstreamStream(plan requestPlan, callbackID string) (hostStreamResponse, error) {
@@ -233,7 +248,7 @@ type streamPump struct {
 func (p *streamPump) deliver(events []qoderEvent) bool {
 	for _, e := range events {
 		if e.Err != nil {
-			closeStream(p.target, e.Err.Message)
+			closeHostStreamWith(p.target, e.Err.Message, decisionError(e.Err))
 			return false
 		}
 		for _, frame := range p.writer.frames(e) {
