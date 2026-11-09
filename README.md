@@ -14,7 +14,7 @@
 </p>
 
 <p align="center">
-  Native Qoder and Qoder CN OAuth login for
+  Native Qoder and Qoder CN OAuth login adapted for Oh-My-CPA, compatible with
   <a href="https://github.com/router-for-me/CLIProxyAPI">CLIProxyAPI</a>
 </p>
 

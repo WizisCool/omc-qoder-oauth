@@ -4,10 +4,10 @@
   "plugin_version": "0.2.3",
   "i18n": {
     "description": {
-      "zh": "原生 Qoder 提供商插件，支持 Qoder 与 Qoder CN 双入口 OAuth 登录、模型发现、OpenAI 兼容请求执行与标准化配额展示。可通过 CPA 原生面板安装；OMC 声明为可选增强。",
-      "en": "Native Qoder provider with Qoder and Qoder CN OAuth, model discovery, OpenAI-compatible execution and normalized quota. Installable through the native CPA panel; the OMC declaration is an optional enhancement.",
-      "zh-Hant": "原生 Qoder 提供者外掛，支援 Qoder 與 Qoder CN 雙入口 OAuth 登入、模型探索、OpenAI 相容請求執行與標準化配額顯示。可透過 CPA 原生面板安裝；OMC 宣告為選用增強功能。",
-      "ms": "Penyedia Qoder asli dengan OAuth Qoder dan Qoder CN, penemuan model, pelaksanaan serasi OpenAI dan kuota terselaras. Boleh dipasang melalui panel CPA asli; deklarasi OMC ialah penambahbaikan pilihan."
+      "zh": "专为 Oh-My-CPA 适配，兼容 CLIProxyAPI 的原生 Qoder 提供商插件，支持 Qoder 与 Qoder CN 双入口 OAuth 登录、模型发现、OpenAI 兼容请求执行与标准化配额展示。可通过 CPA 原生面板安装；OMC 声明为可选增强。",
+      "en": "Native Qoder provider adapted for Oh-My-CPA and compatible with CLIProxyAPI, with Qoder and Qoder CN OAuth, model discovery, OpenAI-compatible execution and normalized quota. Installable through the native CPA panel; the OMC declaration is an optional enhancement.",
+      "zh-Hant": "專為 Oh-My-CPA 適配，相容 CLIProxyAPI 的原生 Qoder 提供者外掛，支援 Qoder 與 Qoder CN 雙入口 OAuth 登入、模型探索、OpenAI 相容請求執行與標準化配額顯示。可透過 CPA 原生面板安裝；OMC 宣告為選用增強功能。",
+      "ms": "Penyedia Qoder asli yang disesuaikan untuk Oh-My-CPA dan serasi dengan CLIProxyAPI, dengan OAuth Qoder dan Qoder CN, penemuan model, pelaksanaan serasi OpenAI dan kuota terselaras. Boleh dipasang melalui panel CPA asli; deklarasi OMC ialah penambahbaikan pilihan."
     }
   }
 }
