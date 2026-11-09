@@ -405,3 +405,23 @@ func TestTextCallBecomesOpenAIFrames(t *testing.T) {
 		t.Fatalf("completion = %s", payload)
 	}
 }
+
+// QoDuck's daily free allowance ends with a 403 frame asking the account to
+// confirm paid usage. That is an allowance, not a lapsed sign-in: the credential
+// keeps answering with every other model.
+func TestPaidConfirmOfferIsAnAllowanceNotALapsedSignIn(t *testing.T) {
+	inner := `{"code":"145","confirmationExpiresAt":1794326400000,"message":"Daily allowance exhausted. Confirm to continue at normal model prices using credits.","modelKey":"lmodel","subCode":"MODEL_PAID_CONFIRM_REQUIRED"}`
+	frame := "data: " + mustJSON(map[string]any{"statusCodeValue": 403, "statusCode": "FORBIDDEN", "body": inner}) + "\n\n"
+	events := newQoderEvents(nil)
+	out := events.feed([]byte(frame))
+	if len(out) != 1 || out[0].Err == nil {
+		t.Fatalf("events = %+v", out)
+	}
+	f := out[0].Err
+	if f.Status != 429 || f.Lapsed || f.CredentialScoped || f.Code != "145" {
+		t.Fatalf("failure = %+v", f)
+	}
+	if !strings.Contains(strings.ToLower(f.Message), "daily allowance") {
+		t.Fatalf("message = %q", f.Message)
+	}
+}

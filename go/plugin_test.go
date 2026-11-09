@@ -360,6 +360,7 @@ func TestClassifyUpstreamCodes(t *testing.T) {
 		{200, `{"code":113,"message":"no credits"}`, 429, "113"},
 		{400, `{"code":406,"message":"sensitive"}`, 400, "406"},
 		{403, `{"code":105,"message":"Login expired"}`, 401, "105"},
+		{403, `{"code":"145","subCode":"MODEL_PAID_CONFIRM_REQUIRED","message":"Daily allowance exhausted. Confirm to continue at normal model prices using credits."}`, 429, "145"},
 		{401, `{"message":"unauthorized"}`, 401, ""},
 		{400, `{"message":"Error in upstream response"}`, 502, ""},
 		{500, `{"message":"boom"}`, 500, ""},
@@ -373,6 +374,10 @@ func TestClassifyUpstreamCodes(t *testing.T) {
 	queue := classifyUpstream(403, nil, []byte(`{"code":10605,"message":"queued","queue":{"isQueued":true,"retryAfterSeconds":7,"modelKey":"fast"}}`))
 	if queue.RetryAfter != 7 || !queue.Queue {
 		t.Fatalf("queue = %+v", queue)
+	}
+	allowance := classifyUpstream(403, nil, []byte(`{"code":"145","subCode":"MODEL_PAID_CONFIRM_REQUIRED","message":"Daily allowance exhausted."}`))
+	if allowance.Lapsed {
+		t.Fatalf("a spent allowance read as a lapsed sign-in: %+v", allowance)
 	}
 }
 
@@ -391,6 +396,7 @@ func TestQuotaRefusalsAreCredentialScoped(t *testing.T) {
 		{"quota wording", 429, `{"message":"quota exceeded"}`, true},
 		{"bare rate limit", 429, `{"message":"too many requests"}`, false},
 		{"queue notice", 403, `{"code":10605,"message":"queued"}`, false},
+		{"free allowance", 403, `{"code":"145","subCode":"MODEL_PAID_CONFIRM_REQUIRED","message":"Daily allowance exhausted."}`, false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -856,10 +862,13 @@ func TestStreamRetriesWithDeviceTokenWhenSignInLapsed(t *testing.T) {
 		defer framesMu.Unlock()
 		return strings.Join(frames, "")
 	}
-	for !strings.Contains(joined(), `"content":"Hi"`) && time.Now().Before(deadline) {
+	// Wait for the closing frame, not just the text: the pump goroutine reads the
+	// stream through the package seams, so a test that returns early restores them
+	// under a still-running pump.
+	for !strings.Contains(joined(), "data: [DONE]") && time.Now().Before(deadline) {
 		time.Sleep(5 * time.Millisecond)
 	}
-	if !strings.Contains(joined(), `"content":"Hi"`) {
+	if !strings.Contains(joined(), `"content":"Hi"`) || !strings.Contains(joined(), "data: [DONE]") {
 		t.Fatalf("frames = %s", joined())
 	}
 }

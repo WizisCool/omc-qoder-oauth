@@ -274,6 +274,7 @@ sees the mapped status:
 | Queue notice, code `10605`, or a queue object with `isQueued` / `serviceAvailable` | `503` with `Retry-After` (from `retryAfterSeconds`, 30 by default) |
 | Codes `110`, `112` to `119`, `122` | `429` |
 | Codes `406`, `416`, `430`, `80411`, `80412`, `100400`, `100401`, `100403` | `400` |
+| Code `145` / `MODEL_PAID_CONFIRM_REQUIRED`, QoDuck's daily free allowance used up | `429`, model-scoped |
 | Code `105`, or any other `401` / `403` | `401`, sign-in expired, sign in again |
 | A message saying `error in upstream response` | `502` |
 | Transport failure, or an unavailable upstream stream | `503` |
@@ -282,13 +283,21 @@ sees the mapped status:
 A quota refusal (`429` from the credit-pool codes above, or any `429` whose message
 names the quota) is reported as credential-wide: Qoder's plan, add-on and
 organisation pools are shared by every model, so CPA cools all of them until the
-stated `Retry-After`. A bare `429` with no quota wording and the queue notice stay
-model-scoped.
+stated `Retry-After`. A bare `429` with no quota wording, the queue notice and
+QoDuck's spent free allowance stay model-scoped.
+
+QoDuck (`qoduck`, catalogue key `lmodel`) is free up to a daily allowance. When it
+runs out, Qoder answers a `403` carrying code `145` and asks the account to confirm
+continuing at normal model prices from its credits. The plugin cannot accept that
+confirmation on the account holder's behalf, so it reports the refusal as a
+model-scoped `429` with Qoder's own sentence and leaves the rest of the credential
+usable. Confirm in Qoder's own client, or wait for the allowance window to end.
 
 Other behaviour worth knowing:
 
-- The plugin does not retry a refusal in place. It answers with the mapped status so
-  CPA can decide whether another credential should carry the request.
+- A refusal is answered with its mapped status so CPA can decide whether another
+  credential should carry the request. The one retry made in place is a lapsed job
+  token, which is re-signed once with the account's device token.
 - A refusal that arrives inside an `OK` stream frame keeps its real status: streaming
   requests read up to the first answer event before any chunk reaches the client.
 - A non-streaming answer with no text, no reasoning and no tool call is reported

@@ -18,6 +18,14 @@ import (
 // carrying another code is something else (a queued request, a refused input).
 const (
 	queuedCode = "10605"
+
+	// allowanceCode is QoDuck's daily free allowance running out: Qoder offers to
+	// continue at normal model prices using credits, which the plugin cannot
+	// accept for the account holder. The refusal arrives as a 403, so it has to be
+	// read before the status is taken for a lapsed sign-in.
+	allowanceCode = "145"
+	// paidConfirmSubCode names that same refusal when Qoder spells it in subCode.
+	paidConfirmSubCode = "MODEL_PAID_CONFIRM_REQUIRED"
 )
 
 var quotaCodes = map[string]bool{"110": true, "112": true, "113": true, "114": true, "115": true, "116": true, "117": true, "118": true, "119": true, "122": true}
@@ -73,6 +81,8 @@ func failureCode(f *qoderFailure) string {
 type failureBody struct {
 	Code    json.RawMessage `json:"code"`
 	Message string          `json:"message"`
+	// SubCode qualifies Code: 145's paid-confirmation offer is spelled here.
+	SubCode string          `json:"subCode"`
 	Details json.RawMessage `json:"details"`
 	Queue   *struct {
 		IsQueued          *bool    `json:"isQueued"`
@@ -108,12 +118,14 @@ func classifyUpstream(status int, headers http.Header, body []byte) *qoderFailur
 	text := strings.TrimSpace(string(body))
 	message := text
 	code := ""
+	subCode := ""
 	var parsed failureBody
 	if json.Unmarshal(body, &parsed) == nil {
 		if parsed.Message != "" {
 			message = parsed.Message
 		}
 		code = rawCode(parsed.Code)
+		subCode = strings.TrimSpace(parsed.SubCode)
 		if len(parsed.Details) > 0 {
 			var details struct {
 				Error struct {
@@ -150,6 +162,7 @@ func classifyUpstream(status int, headers http.Header, body []byte) *qoderFailur
 				var inner failureBody
 				if json.Unmarshal([]byte(env.Body), &inner) == nil {
 					code = rawCode(inner.Code)
+					subCode = strings.TrimSpace(inner.SubCode)
 					if inner.Message != "" {
 						message = inner.Message
 					}
@@ -163,6 +176,17 @@ func classifyUpstream(status int, headers http.Header, body []byte) *qoderFailur
 	hint := retryAfterHint(headers)
 	if code == queuedCode {
 		return &qoderFailure{Status: 503, Code: code, Message: "Qoder queued the request; try again shortly", RetryAfter: 30, Queue: true}
+	}
+	// QoDuck's free allowance is per model and per day, and Qoder answers its end
+	// with a 403 that asks the account to confirm paid usage. It stays
+	// model-scoped and is never a lapsed sign-in: the other models of the same
+	// credential are untouched. Qoder's own sentence already says what to do, so
+	// it is passed through rather than wrapped in another prefix.
+	if code == allowanceCode || subCode == paidConfirmSubCode {
+		if strings.HasPrefix(message, "{") || message == http.StatusText(status) {
+			message = "Qoder's daily free allowance for this model is used up; confirm paid usage in Qoder or choose another model"
+		}
+		return &qoderFailure{Status: 429, Code: code, Message: message}
 	}
 	// Qoder's quota codes spend the account's plan, add-on and organisation
 	// credit pools, so the refusal applies to every model of the credential.
