@@ -96,6 +96,50 @@ func prepareRequest(req pluginapi.ExecutorRequest, sender httpSender) (requestPl
 	}, nil
 }
 
+// withHTTP is this plan carrying a different signed request, for a retry.
+func (p requestPlan) withHTTP(req pluginapi.HTTPRequest) requestPlan {
+	p.HTTP = req
+	return p
+}
+
+// reSignDevice re-signs the same call with the account's device token, for the
+// retry a job token the service refuses needs. The encoded body is unchanged:
+// only the signature and the token inside it differ.
+func (p requestPlan) reSignDevice() (pluginapi.HTTPRequest, bool) {
+	c, ok := p.Credential.withDeviceToken()
+	if !ok {
+		return pluginapi.HTTPRequest{}, false
+	}
+	spec, ok := siteFor(c.Site)
+	if !ok {
+		return pluginapi.HTTPRequest{}, false
+	}
+	headers, err := chatHeaders(p.HTTP.URL, cosyUserFrom(c), string(p.HTTP.Body), spec, getConfig().CosyVersion, p.Model, time.Now().Unix())
+	if err != nil {
+		return pluginapi.HTTPRequest{}, false
+	}
+	req := p.HTTP
+	req.Headers = headers
+	return req, true
+}
+
+// chatCall sends one signed call and reports either the stream it answered with,
+// the refusal it answered with, or the transport failure that stopped it.
+func chatCall(sender httpSender, req pluginapi.HTTPRequest) (pluginapi.HTTPResponse, *qoderFailure, error) {
+	resp, err := sender.Do(req)
+	if err != nil {
+		return pluginapi.HTTPResponse{}, nil, err
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return resp, classifyUpstream(resp.StatusCode, resp.Headers, resp.Body), nil
+	}
+	if !bytes.Contains(resp.Body, []byte("data:")) {
+		// A 200 that is not an SSE stream is Qoder refusing in JSON.
+		return resp, classifyUpstream(http.StatusBadGateway, resp.Headers, resp.Body), nil
+	}
+	return resp, nil, nil
+}
+
 // execute answers one non-streaming chat completion. Qoder always streams, so
 // the buffered body is read as SSE either way.
 func execute(req pluginapi.ExecutorRequest, sender httpSender) (pluginapi.ExecutorResponse, error) {
@@ -105,16 +149,28 @@ func execute(req pluginapi.ExecutorRequest, sender httpSender) (pluginapi.Execut
 	}
 	release := acquire(req.AuthID)
 	defer release()
-	resp, err := sender.Do(plan.HTTP)
+	resp, failure, err := chatCall(sender, plan.HTTP)
 	if err != nil {
 		return pluginapi.ExecutorResponse{}, pluginabi.NewError("transport_error", "Qoder upstream transport failed", 503)
 	}
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return pluginapi.ExecutorResponse{}, decisionError(classifyUpstream(resp.StatusCode, resp.Headers, resp.Body))
+	if failure != nil && failure.Lapsed {
+		// A job token the service calls expired may still have a live device
+		// token beside it, so the same call is worth one retry signed with it.
+		if retry, ok := plan.reSignDevice(); ok {
+			if retried, retryFailure, retryErr := chatCall(sender, retry); retryErr == nil {
+				switch {
+				case retryFailure == nil:
+					resp, failure = retried, nil
+				case !retryFailure.Lapsed:
+					// The device token was accepted but the call still failed:
+					// report why the retry was refused rather than re-signing in.
+					failure = retryFailure
+				}
+			}
+		}
 	}
-	if !bytes.Contains(resp.Body, []byte("data:")) {
-		// A 200 that is not an SSE stream is Qoder refusing in JSON.
-		return pluginapi.ExecutorResponse{}, decisionError(classifyUpstream(http.StatusBadGateway, resp.Headers, resp.Body))
+	if failure != nil {
+		return pluginapi.ExecutorResponse{}, decisionError(failure)
 	}
 	events := newQoderEvents(plan.Tools)
 	var out []qoderEvent
@@ -301,60 +357,84 @@ func executeStream(req pluginapi.ExecutorRequest, callbackID, streamID string, s
 		return nil, err
 	}
 	release := acquire(req.AuthID)
-	response, err := openHTTPStream(plan, callbackID)
-	if err != nil {
-		release()
-		return nil, pluginabi.NewError("transport_error", "Qoder upstream stream failed", 503)
+	// A job token the service calls expired may still have a live device token
+	// beside it, so a lapsed refusal gets one retry signed with that token.
+	plans := []requestPlan{plan}
+	if retry, ok := plan.reSignDevice(); ok {
+		plans = append(plans, plan.withHTTP(retry))
 	}
-	if response.StreamID == "" {
-		release()
-		return nil, pluginabi.NewError("transport_error", "Qoder upstream stream unavailable", 503)
-	}
-	contentType := strings.ToLower(response.Headers.Get("Content-Type"))
-	if response.StatusCode < 200 || response.StatusCode >= 300 || strings.Contains(contentType, "application/json") {
-		raw, readErr := readWholeStream(response.StreamID)
-		release()
-		if readErr != nil {
-			return nil, pluginabi.NewError("transport_error", "Qoder upstream stream failed", 503)
-		}
-		return nil, decisionError(classifyUpstream(response.StatusCode, response.Headers, raw))
-	}
-	events := newQoderEvents(plan.Tools)
-	writer := newStreamAnswer(modelName(plan.Model))
-	// Read until the answer starts so a refusal carried inside an OK frame
-	// (a queue notice, a lapsed token) keeps its real status instead of
-	// arriving as a 200 stream that ends in an error.
-	var pending []qoderEvent
-	for attempt := 0; attempt < 8 && len(pending) == 0; attempt++ {
-		r, err := readStreamChunk(response.StreamID)
+	for i, p := range plans {
+		last := i == len(plans)-1
+		response, err := openHTTPStream(p, callbackID)
 		if err != nil {
-			closeHostStream(response.StreamID)
 			release()
 			return nil, pluginabi.NewError("transport_error", "Qoder upstream stream failed", 503)
 		}
-		pending = append(pending, events.feed(r.Payload)...)
-		if r.Done {
-			pending = append(pending, events.flush()...)
-			break
-		}
-	}
-	for _, e := range pending {
-		if e.Err != nil {
-			closeHostStream(response.StreamID)
+		if response.StreamID == "" {
 			release()
-			return nil, decisionError(e.Err)
+			return nil, pluginabi.NewError("transport_error", "Qoder upstream stream unavailable", 503)
 		}
+		contentType := strings.ToLower(response.Headers.Get("Content-Type"))
+		if response.StatusCode < 200 || response.StatusCode >= 300 || strings.Contains(contentType, "application/json") {
+			raw, readErr := readWholeStream(response.StreamID)
+			if readErr != nil {
+				release()
+				return nil, pluginabi.NewError("transport_error", "Qoder upstream stream failed", 503)
+			}
+			failure := classifyUpstream(response.StatusCode, response.Headers, raw)
+			if failure.Lapsed && !last {
+				continue
+			}
+			release()
+			return nil, decisionError(failure)
+		}
+		events := newQoderEvents(p.Tools)
+		writer := newStreamAnswer(modelName(p.Model))
+		// Read until the answer starts so a refusal carried inside an OK frame
+		// (a queue notice, a lapsed token) keeps its real status instead of
+		// arriving as a 200 stream that ends in an error.
+		var pending []qoderEvent
+		var refused *qoderFailure
+		for attempt := 0; attempt < 8 && len(pending) == 0; attempt++ {
+			r, err := readStreamChunk(response.StreamID)
+			if err != nil {
+				closeHostStream(response.StreamID)
+				release()
+				return nil, pluginabi.NewError("transport_error", "Qoder upstream stream failed", 503)
+			}
+			pending = append(pending, events.feed(r.Payload)...)
+			if r.Done {
+				pending = append(pending, events.flush()...)
+				break
+			}
+		}
+		for _, e := range pending {
+			if e.Err != nil {
+				refused = e.Err
+				closeHostStream(response.StreamID)
+				break
+			}
+		}
+		if refused != nil {
+			if refused.Lapsed && !last {
+				continue
+			}
+			release()
+			return nil, decisionError(refused)
+		}
+		pump := &streamPump{source: response.StreamID, target: streamID, events: events, writer: writer, task: p.Task}
+		go func() {
+			defer release()
+			defer closeHostStream(pump.source)
+			if !pump.deliver(pending) {
+				return
+			}
+			pump.run()
+		}()
+		return map[string]any{"headers": response.Headers}, nil
 	}
-	pump := &streamPump{source: response.StreamID, target: streamID, events: events, writer: writer, task: plan.Task}
-	go func() {
-		defer release()
-		defer closeHostStream(pump.source)
-		if !pump.deliver(pending) {
-			return
-		}
-		pump.run()
-	}()
-	return map[string]any{"headers": response.Headers}, nil
+	release()
+	return nil, pluginabi.NewError("transport_error", "Qoder upstream stream unavailable", 503)
 }
 
 // countTokens is not supported: Qoder documents no token-count endpoint, and a

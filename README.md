@@ -87,7 +87,8 @@ callback listener and no manual callback URL submission is required.
 
 - Qoder and Qoder CN OAuth through the PKCE device flow, one login entry per portal.
 - Job token exchange with single-use refresh tokens; Qoder CN accounts that refuse
-  the exchange keep their device token as the chat token.
+  the exchange keep their device token as the chat token, and any account signs
+  with its device token once the job token has lapsed.
 - Model discovery from Qoder's `/algo/api/v2/model/list` catalogue, published under
   the catalogue's own model names (`GLM-5.3` becomes `glm-5.3`), with a shipped
   fallback list when the catalogue cannot be read. The internal key stays accepted,

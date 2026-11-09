@@ -185,3 +185,54 @@ func TestExecuteMapsReadableIDToTheCatalogueKey(t *testing.T) {
 		t.Fatalf("answer model = %q", out.Model)
 	}
 }
+
+// A job token Qoder calls expired must not cost the account its catalogue: the
+// device token beside it reads the same listing, and that listing carries models
+// (QoDuck's lmodel among them) the shipped fallback predates.
+func TestListingRetriesWithDeviceTokenWhenSignInLapsed(t *testing.T) {
+	resetListingCache()
+	c, err := readCredential(testCredential(siteQoder))
+	if err != nil {
+		t.Fatal(err)
+	}
+	spec, _ := siteFor(c.Site)
+	calls := 0
+	sender := &fakeSender{reply: func(pluginapi.HTTPRequest) (pluginapi.HTTPResponse, error) {
+		calls++
+		if calls == 1 {
+			return pluginapi.HTTPResponse{StatusCode: 403, Body: []byte(`{"code":"105","message":"Login expired"}`)}, nil
+		}
+		return jsonResponse(`{"app":[{"key":"lmodel","display_name":"QoDuck","enable":true,"is_vl":true,"max_input_tokens":180000}]}`), nil
+	}}
+	models, err := readListing(sender, c, spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if calls != 2 {
+		t.Fatalf("catalogue calls = %d", calls)
+	}
+	if got := idOfKey(models, "lmodel"); got != "qoduck" {
+		t.Fatalf("models = %+v", models)
+	}
+}
+
+// The extra call belongs to a lapsed token, not to every failure.
+func TestListingDoesNotRetryOtherFailures(t *testing.T) {
+	resetListingCache()
+	c, err := readCredential(testCredential(siteQoder))
+	if err != nil {
+		t.Fatal(err)
+	}
+	spec, _ := siteFor(c.Site)
+	calls := 0
+	sender := &fakeSender{reply: func(pluginapi.HTTPRequest) (pluginapi.HTTPResponse, error) {
+		calls++
+		return pluginapi.HTTPResponse{StatusCode: 500, Body: []byte(`{"message":"upstream is unwell"}`)}, nil
+	}}
+	if _, err := readListing(sender, c, spec); err == nil {
+		t.Fatal("a failed catalogue read reported success")
+	}
+	if calls != 1 {
+		t.Fatalf("catalogue calls = %d", calls)
+	}
+}

@@ -448,28 +448,50 @@ func fetchListing(sender httpSender, c credential, spec siteSpec, force bool) []
 	return models
 }
 
+// readListing reads the account's catalogue, retrying with the device token when
+// the job token is refused as lapsed. Qoder answers 105 for a dead job token
+// while the device token of the same account still reads and chats, so one
+// expired token must not cost the account its live catalogue.
 func readListing(sender httpSender, c credential, spec siteSpec) ([]qoderModel, error) {
+	models, failure, err := listingOnce(sender, c, spec)
+	if err == nil {
+		return models, nil
+	}
+	if failure != nil && failure.Lapsed {
+		if retry, ok := c.withDeviceToken(); ok {
+			if retried, _, retryErr := listingOnce(sender, retry, spec); retryErr == nil {
+				return retried, nil
+			}
+		}
+	}
+	return nil, err
+}
+
+// listingOnce is one signed catalogue read. failure is set when the service
+// answered with a refusal, so the caller can tell a lapsed token from a
+// transport or parsing failure.
+func listingOnce(sender httpSender, c credential, spec siteSpec) ([]qoderModel, *qoderFailure, error) {
 	target := spec.API + "/algo/api/v2/model/list?Encode=1"
 	headers, err := cosyHeaders(target, cosyUserFrom(c), "", spec, getConfig().CosyVersion, time.Now().Unix())
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	resp, err := sender.Do(pluginapi.HTTPRequest{Method: "GET", URL: target, Headers: headers})
 	if err != nil {
-		return nil, errors.New("Qoder model catalogue request failed")
+		return nil, nil, errors.New("Qoder model catalogue request failed")
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, fmt.Errorf("Qoder model catalogue failed (HTTP %d)", resp.StatusCode)
+		return nil, classifyUpstream(resp.StatusCode, resp.Headers, resp.Body), fmt.Errorf("Qoder model catalogue failed (HTTP %d)", resp.StatusCode)
 	}
 	entries, err := parseListing(resp.Body)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	models := usableModels(entries, spec)
 	if len(models) == 0 {
-		return nil, errors.New("Qoder model catalogue is empty")
+		return nil, nil, errors.New("Qoder model catalogue is empty")
 	}
-	return models, nil
+	return models, nil, nil
 }
 
 // findModel looks a requested model up by published id, by catalogue key or by

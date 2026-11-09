@@ -195,7 +195,8 @@ else the account name, else the user id.
 Refresh tokens are single-use, so two concurrent refreshes for the same credential
 share one exchange instead of spending the token twice. The plugin asks CPA to renew
 about ten minutes before the job token ends. A refresh refused with `401` or `403`
-means the credential needs a new sign-in. An existing `"type": "qoder"` auth file is
+falls back to the credential's device pair; only when both pairs are refused does the
+credential need a new sign-in. An existing `"type": "qoder"` auth file is
 recognized and republished when CPA imports it.
 
 ## Models and routing
@@ -205,7 +206,10 @@ routing: `GLM-5.3` is published as `glm-5.3`, `Qwen3.8-Max` as `qwen3.8-max`. A
 panel therefore lists models by the name its vendor uses, not by Qoder's internal
 catalogue key. The plugin reads the catalogue from the portal's API host
 (`api3.qoder.sh`, or `gateway.qoder.com.cn` for Qoder CN) once per credential and
-caches it for ten minutes; a lookup that misses refreshes it once.
+caches it for ten minutes; a lookup that misses refreshes it once. A job token
+Qoder answers `105` for is retried once with the credential's device token, for the
+catalogue and for chat alike, because the same account's device pair can still read
+and chat while the job token has lapsed.
 
 - Qoder's catalogue key (`gmodel`, `dmodel`, ...) stays the routing key sent
   upstream, and it still resolves in a request: a client that names the old key,
@@ -305,10 +309,12 @@ Other behaviour worth knowing:
   native `site` field to one of those two values.
 - **Login stays pending:** complete the browser page for the entry you started. The
   flow expires after 15 minutes; start a new sign-in after that.
-- **`Qoder sign-in has expired; sign in again`:** the refresh token was refused, so
-  the stored credential cannot be renewed. Start a new sign-in.
+- **`Qoder sign-in has expired; sign in again`:** both the job pair and the device
+  pair were refused, so the stored credential cannot be renewed. Start a new sign-in.
 - **No models appear:** the catalogue read failed and the shipped fallback list took
-  over, or the credential is not active. Check CPA logs for `model_error` and the
+  over, or the credential is not active. A job token that lapsed does not fall back on
+  its own: that read is retried with the device token, and only a failure of both
+  leaves the shipped list in place. Check CPA logs for `model_error` and the
   credential status.
 - **`unknown or disabled Qoder model`:** the requested name is not in the
   account's catalogue. List the models from the panel and use the ID it shows; the

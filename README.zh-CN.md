@@ -76,7 +76,8 @@ OAuth 发起和轮询使用 CPA 原生受认证管理 API。公共插件资源�
 ## 功能
 
 - Qoder 与 Qoder CN OAuth，使用 PKCE 设备流程，每个门户一个登录入口。
-- job 令牌交换，refresh 令牌单次使用；拒绝交换的 Qoder CN 账号保留设备令牌作为聊天令牌。
+- job 令牌交换，refresh 令牌单次使用；拒绝交换的 Qoder CN 账号保留设备令牌作为聊天令牌；
+  job 令牌失效后，账号改用其设备令牌签名。
 - 基于 Qoder `/algo/api/v2/model/list` 目录的模型发现，按目录中的模型名对外发布（`GLM-5.3`
   发布为 `glm-5.3`）；目录读取失败时使用内置兜底列表。内部 key 仍然可用，为 `gmodel`
   写的请求依旧解析到同一个模型。

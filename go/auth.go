@@ -547,9 +547,21 @@ func renewOnce(sender httpSender, spec siteSpec, c credential) (credential, erro
 	if c.DeviceChat || strings.TrimSpace(c.Access) == "" {
 		return renewDeviceToken(sender, spec, c)
 	}
+	if strings.TrimSpace(c.Refresh) == "" {
+		if renewed, ok := renewDeviceFallback(sender, spec, c); ok {
+			return renewed, nil
+		}
+		return credential{}, signInExpired(spec)
+	}
 	raw, err := openAPI(sender, "POST", spec.OpenAPI+"/api/v1/jobToken/refresh", "", map[string]string{"refresh_token": c.Refresh})
 	if err != nil {
 		if status := statusOf(err); status == 401 || status == 403 {
+			// A refused job pair is not necessarily a refused account: the
+			// device pair of the same account can still be live, and Qoder
+			// accepts it to read the catalogue and to chat.
+			if renewed, ok := renewDeviceFallback(sender, spec, c); ok {
+				return renewed, nil
+			}
 			return credential{}, signInExpired(spec)
 		}
 		return credential{}, fmt.Errorf("%s job token refresh failed: %s", spec.Name, readableFailure(err))
@@ -576,6 +588,21 @@ func renewOnce(sender httpSender, spec siteSpec, c credential) (credential, erro
 		next.Expires = time.Now().Add(day).UnixMilli()
 	}
 	return next, nil
+}
+
+// renewDeviceFallback spends the device pair after the job pair is refused, and
+// marks the credential as signing with its device token. It reports false when
+// the account carries no device pair or that pair is refused too.
+func renewDeviceFallback(sender httpSender, spec siteSpec, c credential) (credential, bool) {
+	if strings.TrimSpace(c.DeviceRefresh) == "" {
+		return credential{}, false
+	}
+	renewed, err := renewDeviceToken(sender, spec, c)
+	if err != nil {
+		return credential{}, false
+	}
+	renewed.DeviceChat = true
+	return renewed, true
 }
 
 // renewDeviceToken refreshes a device token. On a Qoder CN account whose device

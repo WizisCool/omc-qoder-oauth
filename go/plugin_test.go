@@ -716,3 +716,150 @@ func TestRefreshDeviceChatRotatesTheChatPair(t *testing.T) {
 		t.Fatalf("expiry = %v", next.expiry())
 	}
 }
+
+// A refused job pair is not a refused account: Qoder hands the same account a
+// device pair, and that token signs the same calls. So a dead job pair spends the
+// device pair before it asks the user to sign in again.
+func TestRefreshFallsBackToDeviceTokenWhenJobPairIsRefused(t *testing.T) {
+	c, err := readCredential(testCredential(siteQoder))
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.DeviceRefresh = "drt-live"
+	spec, _ := siteFor(c.Site)
+	sender := &fakeSender{reply: func(r pluginapi.HTTPRequest) (pluginapi.HTTPResponse, error) {
+		switch {
+		case strings.Contains(r.URL, "/api/v1/jobToken/refresh"):
+			return pluginapi.HTTPResponse{StatusCode: 401, Body: []byte(`{"code":"105","message":"Login expired"}`)}, nil
+		case strings.Contains(r.URL, "/api/v1/deviceToken/refresh"):
+			return jsonResponse(`{"token":"dt-new","refresh_token":"drt-new","expires_in":3600}`), nil
+		}
+		t.Fatalf("unexpected url %s", r.URL)
+		return jsonResponse(`{}`), nil
+	}}
+	next, err := renewOnce(sender, spec, c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !next.DeviceChat || next.DeviceToken != "dt-new" || next.DeviceRefresh != "drt-new" {
+		t.Fatalf("renewed = %+v", next)
+	}
+	if next.chatToken() != "dt-new" {
+		t.Fatalf("chat token = %q", next.chatToken())
+	}
+	if next.Access != c.Access {
+		t.Fatalf("job token rewritten: %q", next.Access)
+	}
+	if next.Expires <= time.Now().UnixMilli() {
+		t.Fatalf("expiry = %d", next.Expires)
+	}
+}
+
+// A refused job token costs one retry, not the answer.
+func TestExecuteRetriesWithDeviceTokenWhenSignInLapsed(t *testing.T) {
+	resetListingCache()
+	chats := 0
+	sender := &fakeSender{reply: func(r pluginapi.HTTPRequest) (pluginapi.HTTPResponse, error) {
+		switch {
+		case strings.Contains(r.URL, "/model/list"):
+			return jsonResponse(`{"app":[{"key":"lmodel","display_name":"QoDuck","enable":true}]}`), nil
+		case strings.Contains(r.URL, "agent_chat_generation"):
+			chats++
+			if chats == 1 {
+				return pluginapi.HTTPResponse{StatusCode: 403, Body: []byte(`{"code":"105","message":"Login expired"}`)}, nil
+			}
+			return pluginapi.HTTPResponse{StatusCode: 200, Body: []byte(sseOf(`{"choices":[{"delta":{"content":"Hi"},"finish_reason":"stop"}]}`))}, nil
+		}
+		t.Fatalf("unexpected url %s", r.URL)
+		return jsonResponse(`{}`), nil
+	}}
+	payload := []byte(`{"model":"qoduck","messages":[{"role":"user","content":"hi"}]}`)
+	resp, err := execute(pluginapi.ExecutorRequest{Model: "qoduck", Payload: payload, StorageJSON: testCredential(siteQoder), AuthID: "a"}, sender)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if chats != 2 {
+		t.Fatalf("chat calls = %d", chats)
+	}
+	if !strings.Contains(string(resp.Payload), `"content":"Hi"`) {
+		t.Fatalf("answer = %s", resp.Payload)
+	}
+}
+
+// Only a lapsed token earns the extra call; another refusal is the answer.
+func TestExecuteDoesNotRetryOtherRefusals(t *testing.T) {
+	resetListingCache()
+	chats := 0
+	sender := &fakeSender{reply: func(r pluginapi.HTTPRequest) (pluginapi.HTTPResponse, error) {
+		if strings.Contains(r.URL, "/model/list") {
+			return jsonResponse(`{"app":[{"key":"ultimate","enable":true}]}`), nil
+		}
+		chats++
+		return pluginapi.HTTPResponse{StatusCode: 403, Body: []byte(`{"code":10605,"message":"queued","queue":{"isQueued":true,"retryAfterSeconds":9}}`)}, nil
+	}}
+	payload := []byte(`{"model":"ultimate","messages":[{"role":"user","content":"hi"}]}`)
+	_, err := execute(pluginapi.ExecutorRequest{Model: "ultimate", Payload: payload, StorageJSON: testCredential(siteQoder), AuthID: "a"}, sender)
+	if err == nil || !strings.Contains(err.Error(), "try again") {
+		t.Fatalf("err = %v", err)
+	}
+	if chats != 1 {
+		t.Fatalf("chat calls = %d", chats)
+	}
+}
+
+// A lapsed token can arrive inside an OK stream instead of as a status; the
+// stream is opened again with the device token rather than answered with 401.
+func TestStreamRetriesWithDeviceTokenWhenSignInLapsed(t *testing.T) {
+	resetListingCache()
+	var frames []string
+	var framesMu sync.Mutex
+	origRead, origEmit, origOpen := readStreamChunk, emitStreamFrame, openHTTPStream
+	t.Cleanup(func() { readStreamChunk, emitStreamFrame, openHTTPStream = origRead, origEmit, origOpen })
+	sent := map[string]bool{}
+	readStreamChunk = func(id string) (hostReadResponse, error) {
+		if sent[id] {
+			return hostReadResponse{Done: true}, nil
+		}
+		sent[id] = true
+		if id == "refused" {
+			return hostReadResponse{Payload: []byte(sseOf(`{"code":"105","message":"Login expired"}`))}, nil
+		}
+		return hostReadResponse{Payload: []byte(sseOf(`{"choices":[{"delta":{"content":"Hi"}}]}`))}, nil
+	}
+	emitStreamFrame = func(id string, payload []byte) error {
+		framesMu.Lock()
+		frames = append(frames, string(payload))
+		framesMu.Unlock()
+		return nil
+	}
+	opened := 0
+	openHTTPStream = func(plan requestPlan, callbackID string) (hostStreamResponse, error) {
+		opened++
+		if opened == 1 {
+			return hostStreamResponse{StatusCode: 200, StreamID: "refused"}, nil
+		}
+		return hostStreamResponse{StatusCode: 200, StreamID: "upstream-2"}, nil
+	}
+	sender := &fakeSender{reply: func(r pluginapi.HTTPRequest) (pluginapi.HTTPResponse, error) {
+		return jsonResponse(`{"app":[{"key":"ultimate","enable":true}]}`), nil
+	}}
+	payload := []byte(`{"model":"ultimate","messages":[{"role":"user","content":"hi"}]}`)
+	if _, err := executeStream(pluginapi.ExecutorRequest{Model: "ultimate", Payload: payload, StorageJSON: testCredential(siteQoder), AuthID: "a"}, "", "target", sender); err != nil {
+		t.Fatal(err)
+	}
+	if opened != 2 {
+		t.Fatalf("stream opens = %d", opened)
+	}
+	deadline := time.Now().Add(2 * time.Second)
+	joined := func() string {
+		framesMu.Lock()
+		defer framesMu.Unlock()
+		return strings.Join(frames, "")
+	}
+	for !strings.Contains(joined(), `"content":"Hi"`) && time.Now().Before(deadline) {
+		time.Sleep(5 * time.Millisecond)
+	}
+	if !strings.Contains(joined(), `"content":"Hi"`) {
+		t.Fatalf("frames = %s", joined())
+	}
+}

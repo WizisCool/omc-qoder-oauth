@@ -119,12 +119,30 @@ func readCredential(b []byte) (credential, error) {
 }
 
 // chatToken is the token that signs model calls: the job token normally, and on
-// a Qoder CN account that would not trade its device token, the device token.
+// a Qoder CN account that would not trade its device token, the device token. A
+// job token past its recorded expiry also gives way to the device token: the
+// account still has a live credential, and signing with the dead one makes the
+// catalogue and every chat answer look like a lapsed sign-in.
 func (c credential) chatToken() string {
 	if c.DeviceChat || strings.TrimSpace(c.Access) == "" {
 		return strings.TrimSpace(c.DeviceToken)
 	}
+	if at := c.expiry(); !at.IsZero() && !time.Now().Before(at) && strings.TrimSpace(c.DeviceToken) != "" {
+		return strings.TrimSpace(c.DeviceToken)
+	}
 	return strings.TrimSpace(c.Access)
+}
+
+// withDeviceToken is this credential re-pointed at its device token, for the
+// retry a token the service refuses needs. It reports false when the account
+// carries no device token, or when it already signs with it.
+func (c credential) withDeviceToken() (credential, bool) {
+	device := strings.TrimSpace(c.DeviceToken)
+	if device == "" || c.chatToken() == device {
+		return credential{}, false
+	}
+	c.DeviceChat = true
+	return c, true
 }
 
 // expiry is when the chat token runs out, zero when unknown.
