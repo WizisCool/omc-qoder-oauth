@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -117,9 +118,12 @@ func sessionID(chat chatRequest, named string) string {
 // business record: every model call answering one user prompt, the tool loop's
 // turns included.
 type qoderTask struct {
-	ID       string
-	Begin    int64
-	Answered bool
+	ID    string
+	Begin int64
+	// Answered is written by the stream pump of one call and read while another
+	// call of the same session builds its body, so it is the task's only field
+	// that is not fixed at creation.
+	Answered atomic.Bool
 	Name     string
 }
 
@@ -193,7 +197,7 @@ func (s *taskStore) begin(session string, chat chatRequest, now int64) *qoderTas
 // markAnswered moves a task past its first answer, as Qoder's client does.
 func (t *qoderTask) markAnswered(int64) {
 	if t != nil {
-		t.Answered = true
+		t.Answered.Store(true)
 	}
 }
 
@@ -628,7 +632,7 @@ func buildQoderBody(chat chatRequest, m qoderModel, session string, task *qoderT
 		task = qoderTasks.begin(session, chat, time.Now().UnixMilli())
 	}
 	stage := "start"
-	if task.Answered {
+	if task.Answered.Load() {
 		stage = "processing"
 	}
 	sys := map[string]any{"type": "text", "text": sysText}
