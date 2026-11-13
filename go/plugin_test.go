@@ -761,6 +761,126 @@ func TestRefreshFallsBackToDeviceTokenWhenJobPairIsRefused(t *testing.T) {
 	}
 }
 
+func TestRefreshRotatesDevicePairAlongsideJobPair(t *testing.T) {
+	jobExpire := time.Now().Add(24 * time.Hour).UTC().Truncate(time.Second)
+	deviceExpire := time.Now().Add(12 * time.Hour).UTC().Truncate(time.Second)
+	c := credential{
+		Site:          siteQoder,
+		Access:        "jt-1",
+		Refresh:       "rt-1",
+		Expires:       time.Now().Add(5 * time.Minute).UnixMilli(),
+		DeviceToken:   "dt-1",
+		DeviceRefresh: "dr-1",
+		UID:           "user-1",
+		MachineID:     "11111111-2222-3333-4444-555555555555",
+	}
+	sender := &fakeSender{reply: func(r pluginapi.HTTPRequest) (pluginapi.HTTPResponse, error) {
+		var body map[string]string
+		_ = json.Unmarshal(r.Body, &body)
+		switch {
+		case strings.Contains(r.URL, "/api/v1/jobToken/refresh"):
+			if body["refresh_token"] != "rt-1" {
+				t.Errorf("job refresh body = %v", body)
+			}
+			return jsonResponse(fmt.Sprintf(`{"token":"jt-2","refresh_token":"rt-2","expires_at":%q}`, jobExpire.Format(time.RFC3339))), nil
+		case strings.Contains(r.URL, "/api/v1/deviceToken/refresh"):
+			if body["refresh_token"] != "dr-1" {
+				t.Errorf("device refresh body = %v", body)
+			}
+			return jsonResponse(fmt.Sprintf(`{"token":"dt-2","refresh_token":"dr-2","expires_at":%q}`, deviceExpire.Format(time.RFC3339))), nil
+		default:
+			t.Fatalf("unexpected url %s", r.URL)
+			return jsonResponse(`{}`), nil
+		}
+	}}
+	out, err := refreshCredential(pluginapi.AuthRefreshRequest{AuthID: "qoder-test.json", StorageJSON: storageOf(c)}, sender)
+	if err != nil {
+		t.Fatal(err)
+	}
+	next, err := readCredential(out.Auth.StorageJSON)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if next.Access != "jt-2" || next.Refresh != "rt-2" || next.DeviceToken != "dt-2" || next.DeviceRefresh != "dr-2" || next.DeviceChat {
+		t.Fatalf("credential = %+v", next)
+	}
+	if next.Expires != jobExpire.UnixMilli() {
+		t.Fatalf("expires = %d, want job token expiry %d", next.Expires, jobExpire.UnixMilli())
+	}
+}
+
+func TestRefreshKeepsJobPairWhenDeviceRefreshFails(t *testing.T) {
+	for _, tc := range []struct {
+		name              string
+		deviceStatus      int
+		wantDeviceRefresh string
+	}{
+		{name: "expired device refresh clears dead token", deviceStatus: 401, wantDeviceRefresh: ""},
+		{name: "transient device refresh failure keeps token", deviceStatus: 500, wantDeviceRefresh: "dr-1"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c := credential{
+				Site:          siteQoder,
+				Access:        "jt-1",
+				Refresh:       "rt-1",
+				Expires:       time.Now().Add(5 * time.Minute).UnixMilli(),
+				DeviceToken:   "dt-1",
+				DeviceRefresh: "dr-1",
+				UID:           "user-1",
+				MachineID:     "11111111-2222-3333-4444-555555555555",
+			}
+			sender := &fakeSender{reply: func(r pluginapi.HTTPRequest) (pluginapi.HTTPResponse, error) {
+				switch {
+				case strings.Contains(r.URL, "/api/v1/jobToken/refresh"):
+					return jsonResponse(`{"token":"jt-2","refresh_token":"rt-2","expires_at":"2099-01-01T00:00:00Z"}`), nil
+				case strings.Contains(r.URL, "/api/v1/deviceToken/refresh"):
+					return pluginapi.HTTPResponse{StatusCode: tc.deviceStatus, Body: []byte(`{"message":"failed"}`)}, nil
+				default:
+					t.Fatalf("unexpected url %s", r.URL)
+					return jsonResponse(`{}`), nil
+				}
+			}}
+			out, err := refreshCredential(pluginapi.AuthRefreshRequest{AuthID: "qoder-test.json", StorageJSON: storageOf(c)}, sender)
+			if err != nil {
+				t.Fatal(err)
+			}
+			next, err := readCredential(out.Auth.StorageJSON)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if next.Access != "jt-2" || next.Refresh != "rt-2" || next.DeviceToken != "dt-1" || next.DeviceRefresh != tc.wantDeviceRefresh || next.DeviceChat {
+				t.Fatalf("credential = %+v", next)
+			}
+		})
+	}
+}
+
+func TestRefreshSyncsDeviceTokenWhenEqualToAccess(t *testing.T) {
+	c := credential{
+		Site:        siteQoderCN,
+		Access:      "tok-1",
+		Refresh:     "rt-1",
+		Expires:     time.Now().Add(5 * time.Minute).UnixMilli(),
+		DeviceToken: "tok-1",
+		UID:         "user-1",
+		MachineID:   "11111111-2222-3333-4444-555555555555",
+	}
+	sender := &fakeSender{reply: func(r pluginapi.HTTPRequest) (pluginapi.HTTPResponse, error) {
+		return jsonResponse(`{"token":"jt-2","refresh_token":"rt-2","expires_at":"2099-01-01T00:00:00Z"}`), nil
+	}}
+	out, err := refreshCredential(pluginapi.AuthRefreshRequest{AuthID: "qoder-test.json", StorageJSON: storageOf(c)}, sender)
+	if err != nil {
+		t.Fatal(err)
+	}
+	next, err := readCredential(out.Auth.StorageJSON)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if next.Access != "jt-2" || next.DeviceToken != "jt-2" {
+		t.Fatalf("credential = %+v", next)
+	}
+}
+
 // A refused job token costs one retry, not the answer.
 func TestExecuteRetriesWithDeviceTokenWhenSignInLapsed(t *testing.T) {
 	resetListingCache()

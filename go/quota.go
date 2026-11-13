@@ -108,10 +108,16 @@ func quotaFetch(req pluginapi.QuotaFetchRequest, sender httpSender) (pluginapi.Q
 	if !ok {
 		return out, pluginabiError("invalid_auth", "invalid Qoder credential", 401)
 	}
-	if strings.TrimSpace(c.DeviceToken) == "" {
+	device := strings.TrimSpace(c.DeviceToken)
+	if device == "" {
 		return out, pluginabiError("invalid_auth", "this Qoder credential has no usage token; sign in again", 401)
 	}
-	raw, status, err := readUsage(sender, spec, c.DeviceToken)
+	raw, status, err := readUsage(sender, spec, device)
+	if err != nil && (status == http.StatusUnauthorized || status == http.StatusForbidden) {
+		if fallback := usageFallbackToken(c, device); fallback != "" {
+			raw, status, err = readUsage(sender, spec, fallback)
+		}
+	}
 	if err != nil {
 		return out, pluginabiError("usage_error", err.Error(), status)
 	}
@@ -255,6 +261,16 @@ func opaquePoolName(name string) bool {
 		}
 	}
 	return hexOnly && len(n) >= 16
+}
+
+func usageFallbackToken(c credential, tried string) string {
+	if chat := c.chatToken(); chat != "" && chat != tried {
+		return chat
+	}
+	if access := strings.TrimSpace(c.Access); access != "" && access != tried {
+		return access
+	}
+	return ""
 }
 
 func first[T any](a, b *T) *T {

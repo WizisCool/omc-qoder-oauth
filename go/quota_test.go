@@ -219,6 +219,16 @@ func TestQuotaFetchRefusesWhatItCannotRead(t *testing.T) {
 			wantHTTP:  401,
 			wantCode:  "usage_error",
 			wantInMsg: "HTTP 401",
+			wantCalls: 2,
+		},
+		{
+			name:      "upstream refuses a device-chat token without retrying the same token",
+			storage:   storageOf(credential{Site: siteQoderCN, Access: "dt-test-token", DeviceToken: "dt-test-token", DeviceChat: true, UID: "user-1", MachineID: "machine-1"}),
+			status:    401,
+			body:      `{"message":"unauthorized"}`,
+			wantHTTP:  401,
+			wantCode:  "usage_error",
+			wantInMsg: "HTTP 401",
 			wantCalls: 1,
 		},
 		{
@@ -284,6 +294,73 @@ func TestQuotaFetchRefusesWhatItCannotRead(t *testing.T) {
 			}
 			if sender.count() != c.wantCalls {
 				t.Fatalf("usage requests = %d, want %d", sender.count(), c.wantCalls)
+			}
+		})
+	}
+}
+
+func TestQuotaFetchFallsBackToAccessWhenDeviceTokenRefused(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		cred       credential
+		failStatus int
+	}{
+		{
+			name: "401 with live job token",
+			cred: credential{
+				Site:          siteQoderCN,
+				Access:        "jt-live",
+				Refresh:       "rt-live",
+				Expires:       time.Now().Add(time.Hour).UnixMilli(),
+				DeviceToken:   "dt-expired",
+				DeviceRefresh: "dr-live",
+				UID:           "user-1",
+				MachineID:     "machine-1",
+			},
+			failStatus: 401,
+		},
+		{
+			name: "403 with recorded expiry elapsed",
+			cred: credential{
+				Site:          siteQoder,
+				Access:        "jt-live",
+				Refresh:       "rt-live",
+				Expires:       time.Now().Add(-time.Minute).UnixMilli(),
+				DeviceToken:   "dt-expired",
+				DeviceRefresh: "dr-live",
+				UID:           "user-1",
+				MachineID:     "machine-1",
+			},
+			failStatus: 403,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			sender := &fakeSender{reply: func(req pluginapi.HTTPRequest) (pluginapi.HTTPResponse, error) {
+				if strings.Contains(req.URL, "Refresh") || strings.Contains(req.URL, "refresh") {
+					t.Fatalf("quotaFetch must not spend refresh tokens: %s", req.URL)
+				}
+				switch req.Headers.Get("Authorization") {
+				case "Bearer dt-expired":
+					return pluginapi.HTTPResponse{StatusCode: tc.failStatus, Body: []byte(`{"code":"TOKEN_EXPIRE","message":"token is not active"}`)}, nil
+				case "Bearer jt-live":
+					return jsonResponse(`{"displayMode":"qoder","qoderUsage":{"userType":"personal_pro","userQuota":{"total":2000,"used":500,"unit":"credits"}}}`), nil
+				default:
+					t.Fatalf("unexpected authorization %q", req.Headers.Get("Authorization"))
+					return pluginapi.HTTPResponse{}, nil
+				}
+			}}
+			resp, err := quotaFetch(pluginapi.QuotaFetchRequest{Provider: credentialProvider, StorageJSON: storageOf(tc.cred)}, sender)
+			if err != nil {
+				t.Fatalf("quotaFetch: %v", err)
+			}
+			if sender.count() != 2 {
+				t.Fatalf("usage requests = %d, want 2", sender.count())
+			}
+			if resp.Subscription == nil || resp.Subscription.Plan != "personal_pro" {
+				t.Fatalf("subscription = %+v", resp.Subscription)
+			}
+			if len(resp.Summary) != 1 || resp.Summary[0].Value != 1500 {
+				t.Fatalf("summary = %+v", resp.Summary)
 			}
 		})
 	}

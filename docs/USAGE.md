@@ -194,10 +194,11 @@ else the account name, else the user id.
 
 Refresh tokens are single-use, so two concurrent refreshes for the same credential
 share one exchange instead of spending the token twice. The plugin asks CPA to renew
-about ten minutes before the job token ends. A refresh refused with `401` or `403`
-falls back to the credential's device pair; only when both pairs are refused does the
-credential need a new sign-in. An existing `"type": "qoder"` auth file is
-recognized and republished when CPA imports it.
+about ten minutes before the job token ends, and a successful job-token refresh also
+rotates the credential's device pair when one is present so the usage token stays
+current. A refresh refused with `401` or `403` falls back to the credential's device
+pair; only when both pairs are refused does the credential need a new sign-in. An
+existing `"type": "qoder"` auth file is recognized and republished when CPA imports it.
 
 ## Models and routing
 
@@ -253,7 +254,9 @@ POST /v8/management/plugins/omc-qoder-oauth/quota
 
 `GET` describes the provider: `qoder`, display name `Qoder`, reset not supported.
 `POST` fetches one credential's usage from `/sash/api/v2/me/usage` on the portal's
-OpenAPI host, with the device token, the one the account pages use.
+OpenAPI host, with the device token, the one the account pages use. If the usage
+endpoint refuses the device token with `401` or `403`, the read retries once with
+the credential's chat or job token without spending a refresh token.
 
 The response is normalized into a subscription (the plan name from the usage
 envelope, or `Enterprise` for an enterprise display mode) and one group of credit

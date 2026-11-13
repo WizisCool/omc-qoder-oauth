@@ -515,11 +515,12 @@ func renewJobToken(authID string, sender httpSender, spec siteSpec, c credential
 	if key == "" {
 		key = c.Site + "\x00" + c.UID
 	}
+	tokenKey := firstNonEmpty(c.Refresh, c.DeviceRefresh)
 	refreshMu.Lock()
 	if flight := refreshFlights[key]; flight != nil {
 		refreshMu.Unlock()
 		<-flight.done
-		if flight.from == c.Refresh {
+		if flight.from == tokenKey {
 			if flight.err != nil {
 				return credential{}, flight.err
 			}
@@ -528,7 +529,7 @@ func renewJobToken(authID string, sender httpSender, spec siteSpec, c credential
 		// The saved pair changed while we waited; ask with the caller's own.
 		return renewOnce(sender, spec, c)
 	}
-	flight := &refreshFlight{from: c.Refresh, done: make(chan struct{})}
+	flight := &refreshFlight{from: tokenKey, done: make(chan struct{})}
 	refreshFlights[key] = flight
 	refreshMu.Unlock()
 
@@ -586,6 +587,25 @@ func renewOnce(sender httpSender, spec siteSpec, c credential) (credential, erro
 		next.Expires = at
 	} else {
 		next.Expires = time.Now().Add(day).UnixMilli()
+	}
+	// Keep the device pair current alongside the job pair so quota reads and
+	// lapsed-job-token retries do not hold an expired device token. A failure
+	// here must not discard the already-rotated single-use job pair.
+	deviceSynced := false
+	if strings.TrimSpace(next.DeviceRefresh) != "" {
+		if dtNext, dtErr := renewDeviceToken(sender, spec, next); dtErr == nil {
+			next.DeviceToken = dtNext.DeviceToken
+			next.DeviceRefresh = dtNext.DeviceRefresh
+			deviceSynced = true
+		} else {
+			var expired *expiredError
+			if errors.As(dtErr, &expired) {
+				next.DeviceRefresh = ""
+			}
+		}
+	}
+	if !deviceSynced && strings.TrimSpace(c.DeviceToken) == strings.TrimSpace(c.Access) {
+		next.DeviceToken = next.Access
 	}
 	return next, nil
 }
